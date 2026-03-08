@@ -1,0 +1,40 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured_service%]"
+    },
+    "error": {
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "invalid_auth_homebox": "Login failed. Verify the HomeBox URL and port (often :7745 or Docker-mapped :3100), and confirm the username/password are correct for HomeBox local login.",
+      "unknown": "[%key:common::config_flow::error::unknown%]"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "host": "[%key:common::config_flow::data::host%]",
+          "password": "[%key:common::config_flow::data::password%]",
+          "username": "[%key:common::config_flow::data::username%]"
+        },
+        "description": "If login fails, HomeBox returned: {auth_error_detail}",
+        "data_description": {
+          "host": "URL or hostname of your HomeBox instance. Common ports are 7745 (default) or 3100 (common Docker mapping), for example: http://homebox.local:3100",
+          "password": "Password of your HomeBox account",
+          "username": "Username or email of your HomeBox account"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "total_locations": {
+        "name": "Total locations"
+      },
+      "total_items": {
+        "name": "Total items"
+      },
+      "total_value": {
+        "name": "Total value"
+      }
+    }
+  }
+}
