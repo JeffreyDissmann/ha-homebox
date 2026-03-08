@@ -10,13 +10,14 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import CONF_HOST
+from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CONF_AREA, DEFAULT_NAME, DOMAIN
 from .coordinator import HomeBoxConfigEntry, HomeBoxDataUpdateCoordinator
 
 
@@ -61,12 +62,19 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up HomeBox sensor entities from config entry."""
+    suggested_area_name: str | None = None
+    if area_id := entry.data.get(CONF_AREA):
+        area_registry = ar.async_get(hass)
+        if area_entry := area_registry.async_get_area(area_id):
+            suggested_area_name = area_entry.name
+
     async_add_entities(
         HomeBoxStatisticsSensor(
             entry.runtime_data,
             entry.entry_id,
-            entry.title,
             entry.data[CONF_HOST],
+            entry.data.get(CONF_NAME, DEFAULT_NAME),
+            suggested_area_name,
             description,
         )
         for description in SENSOR_DESCRIPTIONS
@@ -84,8 +92,9 @@ class HomeBoxStatisticsSensor(
         self,
         coordinator: HomeBoxDataUpdateCoordinator,
         config_entry_id: str,
-        config_entry_title: str,
         host: str,
+        display_name: str,
+        suggested_area: str | None,
         description: HomeBoxSensorEntityDescription,
     ) -> None:
         """Initialize the sensor."""
@@ -96,9 +105,10 @@ class HomeBoxStatisticsSensor(
         self._attr_suggested_object_id = f"homebox_{description.key}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, config_entry_id)},
-            name=config_entry_title or "HomeBox",
+            name=display_name or DEFAULT_NAME,
             manufacturer="HomeBox",
             configuration_url=host,
+            suggested_area=suggested_area,
         )
         self._attr_has_entity_name = True
 

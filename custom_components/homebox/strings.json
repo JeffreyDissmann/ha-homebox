@@ -11,13 +11,17 @@
     "step": {
       "user": {
         "data": {
+          "area": "Room",
           "host": "[%key:common::config_flow::data::host%]",
+          "name": "[%key:common::config_flow::data::name%]",
           "password": "[%key:common::config_flow::data::password%]",
           "username": "[%key:common::config_flow::data::username%]"
         },
         "description": "If login fails, HomeBox returned: {auth_error_detail}",
         "data_description": {
+          "area": "Select an existing Home Assistant room to suggest for the HomeBox device",
           "host": "URL or hostname of your HomeBox instance. Common ports are 7745 (default) or 3100 (common Docker mapping), for example: http://homebox.local:3100",
+          "name": "Device name shown in Home Assistant (default: HomeBox)",
           "password": "Password of your HomeBox account",
           "username": "Username or email of your HomeBox account"
         }
