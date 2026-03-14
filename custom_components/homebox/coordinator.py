@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
@@ -16,7 +17,8 @@ from .api import (
     HomeBoxAuthenticationError,
     HomeBoxConnectionError,
 )
-from .const import DEFAULT_POLL_INTERVAL, DOMAIN
+from .const import DEFAULT_POLL_INTERVAL, DOMAIN, LINKING_NOTIFICATION_ID
+from .linking import HomeBoxTaggedItem, scan_tagged_items_for_links
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,6 +32,8 @@ class HomeBoxStatistics:
     total_items: int
     total_locations: int
     total_value: float
+    unlinked_hb_items: list[HomeBoxTaggedItem]
+    link_conflicts: list[str]
 
 
 class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
@@ -56,19 +60,27 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
             if not self.api.is_authenticated:
                 await self.api.async_authenticate(self._username, self._password)
             data = await self.api.async_get_group_statistics()
+            link_scan = await scan_tagged_items_for_links(self.api, self.config_entry)
+            await self._async_update_linking_notification(link_scan.unlinked_hb_items)
             return HomeBoxStatistics(
                 total_items=data["total_items"],
                 total_locations=data["total_locations"],
                 total_value=data["total_value"],
+                unlinked_hb_items=link_scan.unlinked_hb_items,
+                link_conflicts=link_scan.conflicts,
             )
         except HomeBoxAuthenticationError:
             try:
                 await self.api.async_authenticate(self._username, self._password)
                 data = await self.api.async_get_group_statistics()
+                link_scan = await scan_tagged_items_for_links(self.api, self.config_entry)
+                await self._async_update_linking_notification(link_scan.unlinked_hb_items)
                 return HomeBoxStatistics(
                     total_items=data["total_items"],
                     total_locations=data["total_locations"],
                     total_value=data["total_value"],
+                    unlinked_hb_items=link_scan.unlinked_hb_items,
+                    link_conflicts=link_scan.conflicts,
                 )
             except HomeBoxConnectionError as err:
                 raise UpdateFailed("Error communicating with HomeBox API") from err
@@ -78,3 +90,25 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
             raise UpdateFailed("Error communicating with HomeBox API") from err
         except HomeBoxApiError as err:
             raise UpdateFailed(f"Unexpected HomeBox API response: {err}") from err
+
+    async def _async_update_linking_notification(
+        self, unlinked_hb_items: list[HomeBoxTaggedItem]
+    ) -> None:
+        """Create or dismiss persistent notification for unlinked HomeBox items."""
+        notification_id = f"{LINKING_NOTIFICATION_ID}_{self.config_entry.entry_id}"
+        if not unlinked_hb_items:
+            persistent_notification.async_dismiss(self.hass, notification_id)
+            return
+
+        count = len(unlinked_hb_items)
+        title = "HomeBox linking action needed"
+        message = (
+            f"Found {count} tagged HomeBox item(s) without HA device link.\n\n"
+            "Open the HomeBox integration options and run the linking wizard."
+        )
+        persistent_notification.async_create(
+            self.hass,
+            message,
+            title=title,
+            notification_id=notification_id,
+        )

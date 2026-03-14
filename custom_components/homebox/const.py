@@ -5,6 +5,16 @@ from datetime import timedelta
 DOMAIN = "homebox"
 CONF_AREA = "area"
 DEFAULT_NAME = "HomeBox"
+CONF_LINKS = "links"
+CONF_HA_DEVICE_TO_HB_ITEM = "ha_device_to_hb_item"
+CONF_HB_ITEM_TO_HA_DEVICE = "hb_item_to_ha_device"
+CONF_LINK_ACTION = "link_action"
+CONF_HB_ITEM_ID = "hb_item_id"
+CONF_HA_DEVICE_ID = "ha_device_id"
+
+LINK_TAG_NAME = "HomeAssistant"
+LINK_BACKLINK_FIELD_NAME = "Home Assistant Device URL"
+LINKING_NOTIFICATION_ID = "homebox_linking_unlinked_items"
 
 API_BASE_PATH = "/api"
 DEFAULT_POLL_INTERVAL = timedelta(minutes=5)

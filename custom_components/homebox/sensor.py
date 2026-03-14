@@ -12,13 +12,15 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import area_registry as ar, device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_AREA, DEFAULT_NAME, DOMAIN
 from .coordinator import HomeBoxConfigEntry, HomeBoxDataUpdateCoordinator
+from .linking import get_link_maps
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -62,13 +64,15 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up HomeBox sensor entities from config entry."""
+    entities: list[SensorEntity] = []
+
     suggested_area_name: str | None = None
     if area_id := entry.data.get(CONF_AREA):
         area_registry = ar.async_get(hass)
         if area_entry := area_registry.async_get_area(area_id):
             suggested_area_name = area_entry.name
 
-    async_add_entities(
+    entities.extend(
         HomeBoxStatisticsSensor(
             entry.runtime_data,
             entry.entry_id,
@@ -79,6 +83,22 @@ async def async_setup_entry(
         )
         for description in SENSOR_DESCRIPTIONS
     )
+
+    device_registry = dr.async_get(hass)
+    ha_device_to_hb_item, _ = get_link_maps(entry)
+    for ha_device_id, hb_item_id in ha_device_to_hb_item.items():
+        if linked_ha_device := device_registry.async_get(ha_device_id):
+            entities.append(
+                HomeBoxLinkedItemIdSensor(
+                    entry.runtime_data,
+                    entry.entry_id,
+                    ha_device_id,
+                    hb_item_id,
+                    linked_ha_device,
+                )
+            )
+
+    async_add_entities(entities)
 
 
 class HomeBoxStatisticsSensor(
@@ -119,3 +139,44 @@ class HomeBoxStatisticsSensor(
             self.coordinator.data, self.entity_description.value_key
         )
         self.async_write_ha_state()
+
+
+class HomeBoxLinkedItemIdSensor(
+    CoordinatorEntity[HomeBoxDataUpdateCoordinator], SensorEntity
+):
+    """Diagnostic sensor exposing the linked HomeBox item ID for one HA device."""
+
+    _attr_icon = "mdi:identifier"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_has_entity_name = True
+    _attr_name = "HomeBox ID"
+
+    def __init__(
+        self,
+        coordinator: HomeBoxDataUpdateCoordinator,
+        config_entry_id: str,
+        ha_device_id: str,
+        hb_item_id: str,
+        linked_ha_device: dr.DeviceEntry,
+    ) -> None:
+        """Initialize linked HomeBox ID sensor."""
+        super().__init__(coordinator)
+        self._ha_device_id = ha_device_id
+        self._hb_item_id = hb_item_id
+        self._attr_unique_id = f"{config_entry_id}_{ha_device_id}_hb_item_id"
+        self._attr_native_value = hb_item_id
+
+        device_info: DeviceInfo = DeviceInfo()
+        if linked_ha_device.identifiers:
+            device_info["identifiers"] = set(linked_ha_device.identifiers)
+        if linked_ha_device.connections:
+            device_info["connections"] = set(linked_ha_device.connections)
+        self._attr_device_info = device_info
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        """Return link identifiers for debugging and automations."""
+        return {
+            "ha_device_id": self._ha_device_id,
+            "homebox_id": self._hb_item_id,
+        }
