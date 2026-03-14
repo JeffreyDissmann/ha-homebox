@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from difflib import SequenceMatcher
 import logging
+import re
 from typing import Any
 
 import voluptuous as vol
@@ -149,6 +151,7 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
         """Initialize options flow."""
         super().__init__(config_entry)
         self._selected_hb_item_id: str | None = None
+        self._selected_hb_item_name: str | None = None
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -182,6 +185,17 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
 
         if user_input is not None:
             self._selected_hb_item_id = user_input[CONF_HB_ITEM_ID]
+            selected_hb_item = next(
+                (
+                    hb_item
+                    for hb_item in unlinked_hb_items
+                    if hb_item.hb_item_id == self._selected_hb_item_id
+                ),
+                None,
+            )
+            self._selected_hb_item_name = (
+                selected_hb_item.name if selected_hb_item else None
+            )
             return await self.async_step_choose_ha_device()
 
         options = [
@@ -210,16 +224,33 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
             return self.async_abort(reason="missing_hb_item")
 
         device_registry = dr.async_get(self.hass)
+        hb_item_name = self._selected_hb_item_name or ""
+        ranked_devices = sorted(
+            (
+                (
+                    _name_similarity(hb_item_name, device.name_by_user or device.name),
+                    device,
+                )
+                for device in device_registry.devices.values()
+                if device.name_by_user or device.name
+            ),
+            key=lambda result: result[0],
+            reverse=True,
+        )
+
         ha_device_options = [
             selector.SelectOptionDict(
                 value=device.id,
                 label=device.name_by_user or device.name or device.id,
             )
-            for device in device_registry.devices.values()
-            if device.name_by_user or device.name
+            for _, device in ranked_devices
         ]
         if not ha_device_options:
             return self.async_abort(reason="no_ha_devices")
+
+        suggested_ha_device_id: str | None = None
+        if ranked_devices and ranked_devices[0][0] >= 0.65:
+            suggested_ha_device_id = ranked_devices[0][1].id
 
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -244,7 +275,10 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
             step_id="choose_ha_device",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_HA_DEVICE_ID): selector.SelectSelector(
+                    vol.Required(
+                        CONF_HA_DEVICE_ID,
+                        default=suggested_ha_device_id,
+                    ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
                             options=ha_device_options, mode="dropdown"
                         )
@@ -345,3 +379,28 @@ async def _async_get_hb_item_names(
         if isinstance(hb_item_name, str) and hb_item_name:
             names[hb_item_id] = hb_item_name
     return names
+
+
+def _name_similarity(left: str | None, right: str | None) -> float:
+    """Return fuzzy similarity between two names."""
+    left_norm = _normalize_name(left)
+    right_norm = _normalize_name(right)
+    if not left_norm or not right_norm:
+        return 0.0
+
+    ratio = SequenceMatcher(a=left_norm, b=right_norm).ratio()
+    left_tokens = set(left_norm.split())
+    right_tokens = set(right_norm.split())
+    if not left_tokens or not right_tokens:
+        return ratio
+
+    overlap = len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+    return max(ratio, overlap)
+
+
+def _normalize_name(value: str | None) -> str:
+    """Normalize name for fuzzy matching."""
+    if not value:
+        return ""
+    normalized = re.sub(r"[^a-z0-9]+", " ", value.lower())
+    return " ".join(normalized.split())
