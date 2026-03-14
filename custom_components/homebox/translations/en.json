@@ -10,8 +10,8 @@
         "error": {
             "cannot_connect": "Failed to connect",
             "invalid_auth_homebox": "Login failed. Verify the HomeBox URL and port (often :7745 or Docker-mapped :3100), and confirm the username/password are correct for HomeBox local login.",
-            "link_conflict": "Link conflict: this ha_device or hb_item is already linked.",
-            "unlink_conflict": "Unlink conflict: the selected link no longer matches current mapping.",
+            "link_conflict": "Cannot create link because this Home Assistant device or HomeBox item is already linked.",
+            "unlink_conflict": "Cannot remove link because the selected mapping no longer matches.",
             "unknown": "Unexpected error"
         },
         "step": {
@@ -38,27 +38,27 @@
         "step": {
             "init": {
                 "menu_options": {
-                    "link_ha_device": "Link ha_device to hb_item",
-                    "unlink_ha_device": "Unlink ha_device from hb_item",
-                    "resync": "Resync tagged hb_items"
+                    "link_ha_device": "Create device link",
+                    "unlink_ha_device": "Remove device link",
+                    "resync": "Refresh HomeBox items"
                 }
             },
             "link_ha_device": {
-                "title": "Select HomeBox item",
+                "title": "Choose HomeBox item",
                 "data": {
                     "hb_item_id": "HomeBox item"
                 }
             },
             "choose_ha_device": {
-                "title": "Select Home Assistant device",
+                "title": "Choose Home Assistant device",
                 "data": {
                     "ha_device_id": "Home Assistant device"
                 }
             },
             "unlink_ha_device": {
-                "title": "Select link to remove",
+                "title": "Choose link to remove",
                 "data": {
-                    "link_action": "Existing link"
+                    "link_action": "Linked device and item"
                 }
             }
         },
@@ -69,8 +69,8 @@
             "no_unlinked_hb_items": "No unlinked HomeBox items with tag HomeAssistant were found."
         },
         "error": {
-            "link_conflict": "Link conflict: this ha_device or hb_item is already linked.",
-            "unlink_conflict": "Unlink conflict: the selected link no longer matches current mapping."
+            "link_conflict": "Cannot create link because this Home Assistant device or HomeBox item is already linked.",
+            "unlink_conflict": "Cannot remove link because the selected mapping no longer matches."
         }
     },
     "entity": {

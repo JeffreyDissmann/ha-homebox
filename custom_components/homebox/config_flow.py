@@ -21,7 +21,12 @@ from homeassistant.helpers import device_registry as dr, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util.network import normalize_url
 
-from .api import HomeBoxApiClient, HomeBoxAuthenticationError, HomeBoxConnectionError
+from .api import (
+    HomeBoxApiClient,
+    HomeBoxApiError,
+    HomeBoxAuthenticationError,
+    HomeBoxConnectionError,
+)
 from .const import (
     CONF_AREA,
     CONF_HA_DEVICE_ID,
@@ -246,10 +251,18 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
         if not link_rows:
             return self.async_abort(reason="no_links")
 
+        coordinator = self.config_entry.runtime_data
+        device_registry = dr.async_get(self.hass)
+        hb_item_names = await _async_get_hb_item_names(
+            coordinator.api, [row[CONF_HB_ITEM_ID] for row in link_rows]
+        )
         options = [
             selector.SelectOptionDict(
                 value=f"{row[CONF_HA_DEVICE_ID]}|{row[CONF_HB_ITEM_ID]}",
-                label=f"ha_device={row[CONF_HA_DEVICE_ID]} -> hb_item={row[CONF_HB_ITEM_ID]}",
+                label=(
+                    f"{_ha_device_label(device_registry, row[CONF_HA_DEVICE_ID])}"
+                    f" -> {_hb_item_label(row[CONF_HB_ITEM_ID], hb_item_names)}"
+                ),
             )
             for row in link_rows
         ]
@@ -258,7 +271,6 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
         if user_input is not None:
             selected = user_input[CONF_LINK_ACTION]
             selected_ha_device_id, selected_hb_item_id = selected.split("|", 1)
-            coordinator = self.config_entry.runtime_data
             try:
                 new_options = await remove_link(
                     self.config_entry,
@@ -291,3 +303,34 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
         """Manually resync tagged hb_item scan."""
         await self.config_entry.runtime_data.async_refresh()
         return self.async_create_entry(title="", data=self.options)
+
+
+def _ha_device_label(device_registry: dr.DeviceRegistry, ha_device_id: str) -> str:
+    """Return human-friendly label for a HA device."""
+    if ha_device := device_registry.async_get(ha_device_id):
+        return ha_device.name_by_user or ha_device.name or ha_device_id
+    return ha_device_id
+
+
+def _hb_item_label(hb_item_id: str, hb_item_names: dict[str, str]) -> str:
+    """Return readable label for a HomeBox item ID."""
+    if hb_item_name := hb_item_names.get(hb_item_id):
+        return hb_item_name
+    short_id = hb_item_id[:8]
+    return f"HomeBox item ({short_id})"
+
+
+async def _async_get_hb_item_names(
+    api: HomeBoxApiClient, hb_item_ids: list[str]
+) -> dict[str, str]:
+    """Fetch HomeBox item names for display labels."""
+    names: dict[str, str] = {}
+    for hb_item_id in hb_item_ids:
+        try:
+            hb_item = await api.async_get_hb_item(hb_item_id)
+        except (HomeBoxApiError, HomeBoxAuthenticationError, HomeBoxConnectionError):
+            continue
+        hb_item_name = hb_item.get("name")
+        if isinstance(hb_item_name, str) and hb_item_name:
+            names[hb_item_id] = hb_item_name
+    return names
