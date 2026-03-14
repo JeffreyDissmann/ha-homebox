@@ -23,6 +23,7 @@ from .linking import (
     async_sync_ha_areas_to_hb_locations,
     scan_tagged_items_for_links,
 )
+from .models import HomeBoxGroupStatistics
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,31 +64,11 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
         try:
             if not self.api.is_authenticated:
                 await self.api.async_authenticate(self._username, self._password)
-            await self._async_sync_ha_areas()
-            data = await self.api.async_get_group_statistics()
-            link_scan = await scan_tagged_items_for_links(self.api, self.config_entry)
-            await self._async_update_linking_notification(link_scan.unlinked_hb_items)
-            return HomeBoxStatistics(
-                total_items=data["total_items"],
-                total_locations=data["total_locations"],
-                total_value=data["total_value"],
-                unlinked_hb_items=link_scan.unlinked_hb_items,
-                link_conflicts=link_scan.conflicts,
-            )
+            return await self._async_fetch_statistics_and_links()
         except HomeBoxAuthenticationError:
             try:
                 await self.api.async_authenticate(self._username, self._password)
-                await self._async_sync_ha_areas()
-                data = await self.api.async_get_group_statistics()
-                link_scan = await scan_tagged_items_for_links(self.api, self.config_entry)
-                await self._async_update_linking_notification(link_scan.unlinked_hb_items)
-                return HomeBoxStatistics(
-                    total_items=data["total_items"],
-                    total_locations=data["total_locations"],
-                    total_value=data["total_value"],
-                    unlinked_hb_items=link_scan.unlinked_hb_items,
-                    link_conflicts=link_scan.conflicts,
-                )
+                return await self._async_fetch_statistics_and_links()
             except HomeBoxConnectionError as err:
                 raise UpdateFailed("Error communicating with HomeBox API") from err
             except HomeBoxApiError as err:
@@ -96,6 +77,20 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
             raise UpdateFailed("Error communicating with HomeBox API") from err
         except HomeBoxApiError as err:
             raise UpdateFailed(f"Unexpected HomeBox API response: {err}") from err
+
+    async def _async_fetch_statistics_and_links(self) -> HomeBoxStatistics:
+        """Fetch statistics plus link scan data with shared logic."""
+        await self._async_sync_ha_areas()
+        group_stats: HomeBoxGroupStatistics = await self.api.async_get_group_statistics()
+        link_scan = await scan_tagged_items_for_links(self.api, self.config_entry)
+        await self._async_update_linking_notification(link_scan.unlinked_hb_items)
+        return HomeBoxStatistics(
+            total_items=group_stats.total_items,
+            total_locations=group_stats.total_locations,
+            total_value=group_stats.total_value,
+            unlinked_hb_items=link_scan.unlinked_hb_items,
+            link_conflicts=link_scan.conflicts,
+        )
 
     async def _async_sync_ha_areas(self) -> None:
         """Mirror Home Assistant areas into HomeBox locations."""

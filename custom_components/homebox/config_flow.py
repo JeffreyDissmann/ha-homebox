@@ -21,13 +21,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.util.network import normalize_url
 
 from .api import (
     HomeBoxApiClient,
     HomeBoxApiError,
     HomeBoxAuthenticationError,
     HomeBoxConnectionError,
+    normalize_homebox_host,
 )
 from .const import (
     CONF_AREA,
@@ -72,18 +72,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     except HomeBoxConnectionError as err:
         raise CannotConnect from err
 
-    normalized_host = normalize_host(data[CONF_HOST])
+    normalized_host = normalize_homebox_host(data[CONF_HOST])
     return {
         "title": data.get(CONF_NAME) or URL(normalized_host).host or normalized_host
     }
-
-
-def normalize_host(host: str) -> str:
-    """Normalize host to absolute URL string."""
-    host = host.strip()
-    if "://" not in host:
-        host = f"http://{host}"
-    return normalize_url(host).rstrip("/")
 
 
 class ConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -104,7 +96,7 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         suggested_values: dict[str, Any] = {}
         if user_input is not None:
-            normalized_host = normalize_host(user_input[CONF_HOST])
+            normalized_host = normalize_homebox_host(user_input[CONF_HOST])
             try:
                 user_input[CONF_HOST] = normalized_host
                 info = await validate_input(self.hass, user_input)

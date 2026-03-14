@@ -75,13 +75,73 @@ def build_updated_options(
     return options
 
 
-def get_ha_device_url(hass, ha_device_id: str) -> str:
+def get_ha_device_url(hass: HomeAssistant, ha_device_id: str) -> str:
     """Build Home Assistant URL for a device page."""
     try:
         base_url = get_url(hass)
     except NoURLAvailableError:
         return f"/config/devices/device/{ha_device_id}"
     return f"{base_url.rstrip('/')}/config/devices/device/{ha_device_id}"
+
+
+def _has_backlink_in_fields(fields: list[dict[str, Any]] | None) -> bool:
+    """Return True if any field looks like the managed HA backlink field."""
+    if not fields:
+        return False
+
+    for field in fields:
+        if (
+            field.get("name") == LINK_BACKLINK_FIELD_NAME
+            and isinstance(field.get("textValue"), str)
+            and field.get("textValue")
+        ):
+            return True
+    return False
+
+
+def _pop_bidirectional_link(
+    ha_device_to_hb_item: dict[str, str],
+    hb_item_to_ha_device: dict[str, str],
+    *,
+    ha_device_id: str,
+    hb_item_id: str,
+) -> None:
+    """Remove a single link from both forward and inverse maps."""
+    if ha_device_to_hb_item.get(ha_device_id) == hb_item_id:
+        ha_device_to_hb_item.pop(ha_device_id, None)
+    if hb_item_to_ha_device.get(hb_item_id) == ha_device_id:
+        hb_item_to_ha_device.pop(hb_item_id, None)
+
+
+def _pop_link_by_hb_item(
+    ha_device_to_hb_item: dict[str, str],
+    hb_item_to_ha_device: dict[str, str],
+    hb_item_id: str,
+) -> tuple[str | None, bool]:
+    """Remove inverse link by hb_item and return (ha_device_id, forward_matched)."""
+    ha_device_id = hb_item_to_ha_device.pop(hb_item_id, None)
+    if ha_device_id is None:
+        return None, False
+
+    if ha_device_to_hb_item.get(ha_device_id) == hb_item_id:
+        ha_device_to_hb_item.pop(ha_device_id, None)
+        return ha_device_id, True
+
+    return ha_device_id, False
+
+
+def _pop_link_by_ha_device(
+    ha_device_to_hb_item: dict[str, str],
+    hb_item_to_ha_device: dict[str, str],
+    ha_device_id: str,
+) -> str | None:
+    """Remove forward link by ha_device and return removed hb_item_id."""
+    hb_item_id = ha_device_to_hb_item.pop(ha_device_id, None)
+    if hb_item_id is None:
+        return None
+    if hb_item_to_ha_device.get(hb_item_id) == ha_device_id:
+        hb_item_to_ha_device.pop(hb_item_id, None)
+    return hb_item_id
 
 
 async def scan_tagged_items_for_links(
@@ -97,11 +157,7 @@ async def scan_tagged_items_for_links(
     unlinked_hb_items: list[HomeBoxTaggedItem] = []
 
     for tagged_item in tagged_items:
-        hb_item_id = tagged_item.get("id")
-        hb_item_name = tagged_item.get("name", "Unknown")
-        if not isinstance(hb_item_id, str):
-            continue
-
+        hb_item_id = tagged_item.item_id
         mapped_ha_device_id = hb_item_to_ha_device.get(hb_item_id)
         if mapped_ha_device_id:
             if ha_device_to_hb_item.get(mapped_ha_device_id) != hb_item_id:
@@ -110,26 +166,13 @@ async def scan_tagged_items_for_links(
                 )
             continue
 
-        full_hb_item = await api.async_get_hb_item(hb_item_id)
-        item_fields = full_hb_item.get("fields", [])
-        has_backlink = False
-        if isinstance(item_fields, list):
-            for field in item_fields:
-                if (
-                    isinstance(field, dict)
-                    and field.get("name") == LINK_BACKLINK_FIELD_NAME
-                    and isinstance(field.get("textValue"), str)
-                    and field.get("textValue")
-                ):
-                    has_backlink = True
-                    break
-
+        has_backlink = _has_backlink_in_fields(tagged_item.fields)
         if not has_backlink:
             unlinked_hb_items.append(
                 HomeBoxTaggedItem(
                     hb_item_id=hb_item_id,
-                    name=str(hb_item_name),
-                    has_backlink=has_backlink,
+                    name=tagged_item.name,
+                    has_backlink=False,
                 )
             )
 
@@ -137,7 +180,7 @@ async def scan_tagged_items_for_links(
 
 
 async def apply_link(
-    hass,
+    hass: HomeAssistant,
     config_entry: ConfigEntry,
     api: HomeBoxApiClient,
     ha_device_id: str,
@@ -188,8 +231,12 @@ async def remove_link(
         )
 
     await api.async_clear_hb_item_backlink(hb_item_id)
-    ha_device_to_hb_item.pop(ha_device_id, None)
-    hb_item_to_ha_device.pop(hb_item_id, None)
+    _pop_bidirectional_link(
+        ha_device_to_hb_item,
+        hb_item_to_ha_device,
+        ha_device_id=ha_device_id,
+        hb_item_id=hb_item_id,
+    )
     _async_finalize_ha_device_unlink(
         hass,
         config_entry_id=config_entry.entry_id,
@@ -225,9 +272,7 @@ async def async_cleanup_unlinked_hb_backlinks(
     cleaned = 0
 
     for tagged_item in tagged_items:
-        hb_item_id = tagged_item.get("id")
-        if not isinstance(hb_item_id, str):
-            continue
+        hb_item_id = tagged_item.item_id
 
         mapped_ha_device_id = hb_item_to_ha_device.get(hb_item_id)
         if mapped_ha_device_id is not None:
@@ -238,27 +283,21 @@ async def async_cleanup_unlinked_hb_backlinks(
 
             await api.async_clear_hb_item_backlink(hb_item_id)
             cleaned += 1
-            hb_item_to_ha_device.pop(hb_item_id, None)
-            if expected_hb_item_id == hb_item_id:
-                ha_device_to_hb_item.pop(mapped_ha_device_id, None)
+            popped_ha_device_id, had_matching_forward = _pop_link_by_hb_item(
+                ha_device_to_hb_item,
+                hb_item_to_ha_device,
+                hb_item_id,
+            )
+            if popped_ha_device_id is not None:
                 _async_finalize_ha_device_unlink(
                     hass,
                     config_entry_id=config_entry.entry_id,
-                    ha_device_id=mapped_ha_device_id,
+                    ha_device_id=popped_ha_device_id,
                     ha_device_to_hb_item=ha_device_to_hb_item,
-                    api=api,
-                    hb_item_id=hb_item_id,
+                    api=api if had_matching_forward else None,
+                    hb_item_id=hb_item_id if had_matching_forward else None,
                 )
-            else:
-                _async_finalize_ha_device_unlink(
-                    hass,
-                    config_entry_id=config_entry.entry_id,
-                    ha_device_id=mapped_ha_device_id,
-                    ha_device_to_hb_item=ha_device_to_hb_item,
-                    api=None,
-                    hb_item_id=None,
-                )
-            maps_changed = True
+                maps_changed = True
             continue
 
         full_hb_item = await api.async_get_hb_item(hb_item_id)
@@ -379,13 +418,11 @@ async def async_cleanup_removed_ha_device_link(
 ) -> dict[str, Any] | None:
     """Clean up mapping and HomeBox backlink when a linked HA device is removed."""
     ha_device_to_hb_item, hb_item_to_ha_device = get_link_maps(config_entry)
-    hb_item_id = ha_device_to_hb_item.get(ha_device_id)
+    hb_item_id = _pop_link_by_ha_device(ha_device_to_hb_item, hb_item_to_ha_device, ha_device_id)
     if hb_item_id is None:
         return None
 
     await api.async_clear_hb_item_backlink(hb_item_id)
-    ha_device_to_hb_item.pop(ha_device_id, None)
-    hb_item_to_ha_device.pop(hb_item_id, None)
     _async_finalize_ha_device_unlink(
         hass,
         config_entry_id=config_entry.entry_id,

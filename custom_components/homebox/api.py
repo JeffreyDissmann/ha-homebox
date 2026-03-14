@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from http import HTTPStatus
-import re
 from typing import Any
 
 from aiohttp import ClientError, ClientResponse, ClientSession
@@ -11,7 +10,21 @@ from yarl import URL
 
 from homeassistant.util.network import normalize_url
 
-from .const import API_BASE_PATH, LINK_BACKLINK_FIELD_NAME, LINK_TAG_NAME
+from .const import API_BASE_PATH, LINK_TAG_NAME
+from .item_fields import (
+    build_item_update_payload,
+    extract_item_fields,
+    merge_backlink_field,
+)
+from .models import HomeBoxGroupStatistics, HomeBoxItemSummary
+
+
+def normalize_homebox_host(host: str) -> str:
+    """Normalize host to an absolute URL without a trailing slash."""
+    candidate = host.strip()
+    if "://" not in candidate:
+        candidate = f"http://{candidate}"
+    return normalize_url(candidate).rstrip("/")
 
 
 class HomeBoxApiError(Exception):
@@ -31,8 +44,8 @@ class HomeBoxApiClient:
 
     def __init__(self, host: str, session: ClientSession) -> None:
         """Initialize the HomeBox API client."""
-        normalized_host = self._normalize_host(host)
-        self._api_url = URL(normalized_host).join(URL(API_BASE_PATH + "/"))
+        self._host = normalize_homebox_host(host)
+        self._api_url = URL(self._host).join(URL(API_BASE_PATH + "/"))
         self._session = session
         self._token: str | None = None
 
@@ -40,15 +53,6 @@ class HomeBoxApiClient:
     def is_authenticated(self) -> bool:
         """Return if the client currently has an auth token."""
         return self._token is not None
-
-    @staticmethod
-    def _normalize_host(host: str) -> str:
-        """Normalize host to an absolute URL without a trailing slash."""
-        candidate = host.strip()
-        if "://" not in candidate:
-            candidate = f"http://{candidate}"
-
-        return normalize_url(candidate).rstrip("/")
 
     @staticmethod
     def _normalize_token(token: str) -> str:
@@ -93,34 +97,106 @@ class HomeBoxApiClient:
             return "No details returned by HomeBox."
         return detail[:200]
 
+    async def _async_request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        auth_required: bool,
+        error_context: str,
+        params: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
+        include_auth_detail: bool = False,
+    ) -> Any:
+        """Execute a JSON request and map errors consistently."""
+        url = self._api_url.join(URL(path))
+        headers = self._build_auth_headers() if auth_required else None
+
+        try:
+            async with self._session.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json=payload,
+            ) as response:
+                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN) or (
+                    include_auth_detail and response.status == HTTPStatus.BAD_REQUEST
+                ):
+                    if include_auth_detail:
+                        detail = await self._extract_error_detail(response)
+                        raise HomeBoxAuthenticationError(
+                            f"Status {response.status}: {detail}"
+                        )
+                    raise HomeBoxAuthenticationError
+
+                if response.status >= HTTPStatus.BAD_REQUEST:
+                    raise HomeBoxApiError(
+                        f"HomeBox {error_context} failed with status {response.status}"
+                    )
+
+                return await response.json()
+        except ClientError as err:
+            raise HomeBoxConnectionError from err
+
+    @staticmethod
+    def _parse_group_statistics(payload: dict[str, Any]) -> HomeBoxGroupStatistics:
+        """Validate and normalize HomeBox group statistics payload."""
+        total_items = payload.get("totalItems")
+        if not isinstance(total_items, int):
+            raise HomeBoxApiError("HomeBox statistics response missing totalItems")
+
+        total_locations = payload.get("totalLocations")
+        if not isinstance(total_locations, int):
+            raise HomeBoxApiError("HomeBox statistics response missing totalLocations")
+
+        total_item_price = payload.get("totalItemPrice")
+        if not isinstance(total_item_price, int | float):
+            raise HomeBoxApiError("HomeBox statistics response missing totalItemPrice")
+
+        return HomeBoxGroupStatistics(
+            total_items=total_items,
+            total_locations=total_locations,
+            total_value=float(total_item_price),
+        )
+
+    @staticmethod
+    def _parse_item_summary(payload: dict[str, Any]) -> HomeBoxItemSummary | None:
+        """Parse and normalize a HomeBox item summary payload."""
+        item_id = payload.get("id")
+        if not isinstance(item_id, str):
+            return None
+
+        name = payload.get("name")
+        if not isinstance(name, str) or not name:
+            name = "Unknown"
+
+        fields = payload.get("fields")
+        normalized_fields: list[dict[str, Any]] | None = None
+        if isinstance(fields, list):
+            normalized_fields = [field for field in fields if isinstance(field, dict)]
+
+        return HomeBoxItemSummary(item_id=item_id, name=name, fields=normalized_fields)
+
     async def async_authenticate(self, username: str, password: str) -> None:
         """Authenticate with HomeBox and store bearer token."""
-        url = self._api_url.join(URL("v1/users/login"))
-        payload: dict[str, Any] = {
+        payload = {
             "username": username,
             "password": password,
             "stayLoggedIn": True,
         }
 
-        try:
-            async with self._session.post(url, json=payload) as response:
-                if response.status in (
-                    HTTPStatus.UNAUTHORIZED,
-                    HTTPStatus.FORBIDDEN,
-                    HTTPStatus.BAD_REQUEST,
-                ):
-                    detail = await self._extract_error_detail(response)
-                    raise HomeBoxAuthenticationError(
-                        f"Status {response.status}: {detail}"
-                    )
-                if response.status >= HTTPStatus.BAD_REQUEST:
-                    raise HomeBoxApiError(
-                        f"HomeBox login request failed with status {response.status}"
-                    )
+        response_data = await self._async_request_json(
+            "POST",
+            "v1/users/login",
+            auth_required=False,
+            error_context="login request",
+            payload=payload,
+            include_auth_detail=True,
+        )
 
-                response_data = await response.json()
-        except ClientError as err:
-            raise HomeBoxConnectionError from err
+        if not isinstance(response_data, dict):
+            raise HomeBoxApiError("HomeBox login response is invalid")
 
         token = response_data.get("token")
         if not isinstance(token, str) or not token:
@@ -130,133 +206,53 @@ class HomeBoxApiClient:
 
     async def async_get_total_items(self) -> int:
         """Return total item count from HomeBox group statistics."""
-        url = self._api_url.join(URL("v1/groups/statistics"))
-        headers = self._build_auth_headers()
+        return (await self.async_get_group_statistics()).total_items
 
-        try:
-            async with self._session.get(url, headers=headers) as response:
-                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
-                    raise HomeBoxAuthenticationError
-                if response.status >= HTTPStatus.BAD_REQUEST:
-                    raise HomeBoxApiError(
-                        "HomeBox statistics request failed "
-                        f"with status {response.status}"
-                    )
-
-                response_data = await response.json()
-        except ClientError as err:
-            raise HomeBoxConnectionError from err
-
-        total_items = response_data.get("totalItems")
-        if not isinstance(total_items, int):
-            raise HomeBoxApiError("HomeBox statistics response missing totalItems")
-
-        return total_items
-
-    async def async_get_group_statistics(self) -> dict[str, int | float]:
+    async def async_get_group_statistics(self) -> HomeBoxGroupStatistics:
         """Return basic group statistics from HomeBox."""
-        url = self._api_url.join(URL("v1/groups/statistics"))
-        headers = self._build_auth_headers()
-
-        try:
-            async with self._session.get(url, headers=headers) as response:
-                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
-                    raise HomeBoxAuthenticationError
-                if response.status >= HTTPStatus.BAD_REQUEST:
-                    raise HomeBoxApiError(
-                        "HomeBox statistics request failed "
-                        f"with status {response.status}"
-                    )
-
-                response_data = await response.json()
-        except ClientError as err:
-            raise HomeBoxConnectionError from err
-
-        total_items = response_data.get("totalItems")
-        if not isinstance(total_items, int):
-            raise HomeBoxApiError("HomeBox statistics response missing totalItems")
-
-        total_locations = response_data.get("totalLocations")
-        if not isinstance(total_locations, int):
-            raise HomeBoxApiError("HomeBox statistics response missing totalLocations")
-
-        total_item_price = response_data.get("totalItemPrice")
-        if not isinstance(total_item_price, int | float):
-            raise HomeBoxApiError("HomeBox statistics response missing totalItemPrice")
-
-        return {
-            "total_items": total_items,
-            "total_locations": total_locations,
-            "total_value": float(total_item_price),
-        }
+        response_data = await self._async_request_json(
+            "GET",
+            "v1/groups/statistics",
+            auth_required=True,
+            error_context="statistics request",
+        )
+        if not isinstance(response_data, dict):
+            raise HomeBoxApiError("HomeBox statistics response is invalid")
+        return self._parse_group_statistics(response_data)
 
     async def async_get_tags(self) -> list[dict[str, Any]]:
         """Return all HomeBox tags."""
-        url = self._api_url.join(URL("v1/tags"))
-        headers = self._build_auth_headers()
-
-        try:
-            async with self._session.get(url, headers=headers) as response:
-                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
-                    raise HomeBoxAuthenticationError
-                if response.status >= HTTPStatus.BAD_REQUEST:
-                    raise HomeBoxApiError(
-                        f"HomeBox tags request failed with status {response.status}"
-                    )
-                data = await response.json()
-        except ClientError as err:
-            raise HomeBoxConnectionError from err
-
+        data = await self._async_request_json(
+            "GET",
+            "v1/tags",
+            auth_required=True,
+            error_context="tags request",
+        )
         if not isinstance(data, list):
             raise HomeBoxApiError("HomeBox tags response is not a list")
-        return data
+        return [item for item in data if isinstance(item, dict)]
 
     async def async_get_locations(self) -> list[dict[str, Any]]:
         """Return all HomeBox locations."""
-        url = self._api_url.join(URL("v1/locations"))
-        headers = self._build_auth_headers()
-
-        try:
-            async with self._session.get(url, headers=headers) as response:
-                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
-                    raise HomeBoxAuthenticationError
-                if response.status >= HTTPStatus.BAD_REQUEST:
-                    raise HomeBoxApiError(
-                        f"HomeBox locations request failed with status {response.status}"
-                    )
-                data = await response.json()
-        except ClientError as err:
-            raise HomeBoxConnectionError from err
-
+        data = await self._async_request_json(
+            "GET",
+            "v1/locations",
+            auth_required=True,
+            error_context="locations request",
+        )
         if not isinstance(data, list):
             raise HomeBoxApiError("HomeBox locations response is not a list")
-        return data
+        return [item for item in data if isinstance(item, dict)]
 
     async def async_create_location(self, name: str) -> dict[str, Any]:
         """Create a HomeBox location."""
-        url = self._api_url.join(URL("v1/locations"))
-        headers = self._build_auth_headers()
-
-        try:
-            async with self._session.post(
-                url,
-                headers=headers,
-                json={
-                    "name": name,
-                    "description": "",
-                    "parentId": None,
-                },
-            ) as response:
-                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
-                    raise HomeBoxAuthenticationError
-                if response.status >= HTTPStatus.BAD_REQUEST:
-                    raise HomeBoxApiError(
-                        f"HomeBox create location failed with status {response.status}"
-                    )
-                data = await response.json()
-        except ClientError as err:
-            raise HomeBoxConnectionError from err
-
+        data = await self._async_request_json(
+            "POST",
+            "v1/locations",
+            auth_required=True,
+            error_context="create location",
+            payload={"name": name, "description": "", "parentId": None},
+        )
         if not isinstance(data, dict):
             raise HomeBoxApiError("HomeBox create location response is invalid")
         return data
@@ -285,9 +281,7 @@ class HomeBoxApiClient:
             raise HomeBoxApiError("Created HomeBox location has no ID")
         return location_id
 
-    async def async_ensure_locations_by_name(
-        self, names: list[str]
-    ) -> dict[str, str]:
+    async def async_ensure_locations_by_name(self, names: list[str]) -> dict[str, str]:
         """Ensure multiple HomeBox locations exist and return name->id mapping."""
         normalized_names = [
             " ".join(name.split()).strip()
@@ -297,10 +291,10 @@ class HomeBoxApiClient:
         if not normalized_names:
             return {}
 
-        by_casefold: dict[str, str] = {}
-        for normalized_name in normalized_names:
-            by_casefold[normalized_name.casefold()] = normalized_name
-
+        by_casefold: dict[str, str] = {
+            normalized_name.casefold(): normalized_name
+            for normalized_name in normalized_names
+        }
         target_casefolds = set(by_casefold)
         location_map: dict[str, str] = {}
 
@@ -310,9 +304,9 @@ class HomeBoxApiClient:
             location_id = location.get("id")
             if not isinstance(location_name, str) or not isinstance(location_id, str):
                 continue
-            key = location_name.casefold()
-            if key in target_casefolds and key not in location_map:
-                location_map[key] = location_id
+            casefold_name = location_name.casefold()
+            if casefold_name in target_casefolds and casefold_name not in location_map:
+                location_map[casefold_name] = location_id
 
         for casefold_name in target_casefolds:
             if casefold_name in location_map:
@@ -332,23 +326,13 @@ class HomeBoxApiClient:
 
     async def async_create_tag(self, name: str) -> dict[str, Any]:
         """Create a HomeBox tag."""
-        url = self._api_url.join(URL("v1/tags"))
-        headers = self._build_auth_headers()
-
-        try:
-            async with self._session.post(
-                url, headers=headers, json={"name": name}
-            ) as response:
-                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
-                    raise HomeBoxAuthenticationError
-                if response.status >= HTTPStatus.BAD_REQUEST:
-                    raise HomeBoxApiError(
-                        f"HomeBox create tag failed with status {response.status}"
-                    )
-                data = await response.json()
-        except ClientError as err:
-            raise HomeBoxConnectionError from err
-
+        data = await self._async_request_json(
+            "POST",
+            "v1/tags",
+            auth_required=True,
+            error_context="create tag",
+            payload={"name": name},
+        )
         if not isinstance(data, dict):
             raise HomeBoxApiError("HomeBox create tag response is invalid")
         return data
@@ -366,47 +350,34 @@ class HomeBoxApiClient:
             raise HomeBoxApiError("Created HomeAssistant tag has no ID")
         return tag_id
 
-    async def async_get_hb_items_by_tag(self, tag_id: str) -> list[dict[str, Any]]:
+    async def async_get_hb_items_by_tag(self, tag_id: str) -> list[HomeBoxItemSummary]:
         """Return all HomeBox items for a given tag."""
-        url = self._api_url.join(URL("v1/items"))
-        headers = self._build_auth_headers()
         page = 1
         page_size = 100
-        total = None
-        items: list[dict[str, Any]] = []
+        total: int | None = None
+        items: list[HomeBoxItemSummary] = []
 
         while total is None or len(items) < total:
-            params: dict[str, Any] = {
-                "tags": [tag_id],
-                "page": page,
-                "pageSize": page_size,
-            }
-            try:
-                async with self._session.get(
-                    url, headers=headers, params=params
-                ) as response:
-                    if response.status in (
-                        HTTPStatus.UNAUTHORIZED,
-                        HTTPStatus.FORBIDDEN,
-                    ):
-                        raise HomeBoxAuthenticationError
-                    if response.status >= HTTPStatus.BAD_REQUEST:
-                        raise HomeBoxApiError(
-                            f"HomeBox items request failed with status {response.status}"
-                        )
-                    data = await response.json()
-            except ClientError as err:
-                raise HomeBoxConnectionError from err
-
-            if not isinstance(data, dict):
+            page_data = await self._async_request_json(
+                "GET",
+                "v1/items",
+                auth_required=True,
+                error_context="items request",
+                params={"tags": [tag_id], "page": page, "pageSize": page_size},
+            )
+            if not isinstance(page_data, dict):
                 raise HomeBoxApiError("HomeBox items response is invalid")
 
-            page_items = data.get("items")
-            total_value = data.get("total")
+            page_items = page_data.get("items")
+            total_value = page_data.get("total")
             if not isinstance(page_items, list) or not isinstance(total_value, int):
                 raise HomeBoxApiError("HomeBox items response missing items/total")
 
-            items.extend(item for item in page_items if isinstance(item, dict))
+            for page_item in page_items:
+                if not isinstance(page_item, dict):
+                    continue
+                if parsed := self._parse_item_summary(page_item):
+                    items.append(parsed)
 
             total = total_value
             if not page_items:
@@ -417,155 +388,27 @@ class HomeBoxApiClient:
 
     async def async_get_hb_item(self, hb_item_id: str) -> dict[str, Any]:
         """Return full HomeBox item."""
-        url = self._api_url.join(URL(f"v1/items/{hb_item_id}"))
-        headers = self._build_auth_headers()
-
-        try:
-            async with self._session.get(url, headers=headers) as response:
-                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
-                    raise HomeBoxAuthenticationError
-                if response.status >= HTTPStatus.BAD_REQUEST:
-                    raise HomeBoxApiError(
-                        f"HomeBox item request failed with status {response.status}"
-                    )
-                data = await response.json()
-        except ClientError as err:
-            raise HomeBoxConnectionError from err
-
+        data = await self._async_request_json(
+            "GET",
+            f"v1/items/{hb_item_id}",
+            auth_required=True,
+            error_context="item request",
+        )
         if not isinstance(data, dict):
             raise HomeBoxApiError("HomeBox item response is invalid")
         return data
-
-    @staticmethod
-    def _extract_item_fields(hb_item: dict[str, Any]) -> list[dict[str, Any]]:
-        """Extract fields from HomeBox item."""
-        fields = hb_item.get("fields")
-        if not isinstance(fields, list):
-            return []
-        return [field for field in fields if isinstance(field, dict)]
-
-    @staticmethod
-    def _merge_backlink_field(
-        fields: list[dict[str, Any]], backlink_url: str | None
-    ) -> list[dict[str, Any]]:
-        """Merge Home Assistant backlink custom field into fields list."""
-        merged: list[dict[str, Any]] = []
-        found = False
-
-        for field in fields:
-            if HomeBoxApiClient._is_backlink_field(field):
-                found = True
-                merged.append(
-                    {
-                        "id": field.get("id"),
-                        "type": "text",
-                        "name": field.get("name") or LINK_BACKLINK_FIELD_NAME,
-                        "textValue": backlink_url or "",
-                        "numberValue": field.get("numberValue") or 0,
-                        "booleanValue": field.get("booleanValue") or False,
-                    }
-                )
-                continue
-            merged.append(field)
-
-        if not found and backlink_url:
-            merged.append(
-                {
-                    "type": "text",
-                    "name": LINK_BACKLINK_FIELD_NAME,
-                    "textValue": backlink_url,
-                    "numberValue": 0,
-                    "booleanValue": False,
-                }
-            )
-
-        return merged
-
-    @staticmethod
-    def _is_backlink_field(field: dict[str, Any]) -> bool:
-        """Return True if a field is the managed Home Assistant backlink field."""
-        name = field.get("name")
-        if isinstance(name, str) and name == LINK_BACKLINK_FIELD_NAME:
-            return True
-
-        if name not in (None, ""):
-            return False
-
-        text_value = field.get("textValue")
-        if not isinstance(text_value, str):
-            return False
-
-        return bool(
-            re.search(r"/config/devices/device/[^/?#\s]+/?$", text_value.strip())
-        )
-
-    @staticmethod
-    def _build_item_update_payload(
-        hb_item: dict[str, Any], fields: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        """Build full PUT payload preserving HomeBox item values."""
-        payload: dict[str, Any] = {
-            "id": hb_item.get("id"),
-            "name": hb_item.get("name", ""),
-            "description": hb_item.get("description", "") or "",
-            "insured": bool(hb_item.get("insured", False)),
-            "archived": bool(hb_item.get("archived", False)),
-            "quantity": int(hb_item.get("quantity", 1) or 1),
-            "assetId": hb_item.get("assetId", "") or "",
-            "manufacturer": hb_item.get("manufacturer", "") or "",
-            "modelNumber": hb_item.get("modelNumber", "") or "",
-            "notes": hb_item.get("notes", "") or "",
-            "purchaseFrom": hb_item.get("purchaseFrom", "") or "",
-            "purchasePrice": hb_item.get("purchasePrice"),
-            "purchaseTime": hb_item.get("purchaseTime"),
-            "serialNumber": hb_item.get("serialNumber", "") or "",
-            "soldNotes": hb_item.get("soldNotes", "") or "",
-            "soldPrice": hb_item.get("soldPrice"),
-            "soldTime": hb_item.get("soldTime"),
-            "soldTo": hb_item.get("soldTo", "") or "",
-            "warrantyDetails": hb_item.get("warrantyDetails", "") or "",
-            "warrantyExpires": hb_item.get("warrantyExpires"),
-            "lifetimeWarranty": bool(hb_item.get("lifetimeWarranty", False)),
-            "syncChildItemsLocations": bool(
-                hb_item.get("syncChildItemsLocations", False)
-            ),
-            "fields": fields,
-            "tagIds": [
-                tag["id"]
-                for tag in hb_item.get("tags", [])
-                if isinstance(tag, dict) and isinstance(tag.get("id"), str)
-            ],
-        }
-
-        location = hb_item.get("location")
-        if isinstance(location, dict) and isinstance(location.get("id"), str):
-            payload["locationId"] = location["id"]
-
-        parent = hb_item.get("parent")
-        if isinstance(parent, dict) and isinstance(parent.get("id"), str):
-            payload["parentId"] = parent["id"]
-
-        return payload
 
     async def async_update_hb_item(
         self, hb_item_id: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
         """Update a HomeBox item with PUT payload."""
-        url = self._api_url.join(URL(f"v1/items/{hb_item_id}"))
-        headers = self._build_auth_headers()
-
-        try:
-            async with self._session.put(url, headers=headers, json=payload) as response:
-                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
-                    raise HomeBoxAuthenticationError
-                if response.status >= HTTPStatus.BAD_REQUEST:
-                    raise HomeBoxApiError(
-                        f"HomeBox item update failed with status {response.status}"
-                    )
-                data = await response.json()
-        except ClientError as err:
-            raise HomeBoxConnectionError from err
-
+        data = await self._async_request_json(
+            "PUT",
+            f"v1/items/{hb_item_id}",
+            auth_required=True,
+            error_context="item update",
+            payload=payload,
+        )
         if not isinstance(data, dict):
             raise HomeBoxApiError("HomeBox item update response is invalid")
         return data
@@ -575,30 +418,27 @@ class HomeBoxApiClient:
     ) -> None:
         """Set Home Assistant backlink custom field on a HomeBox item."""
         hb_item = await self.async_get_hb_item(hb_item_id)
-        fields = self._extract_item_fields(hb_item)
-        merged_fields = self._merge_backlink_field(fields, ha_device_url)
-        payload = self._build_item_update_payload(hb_item, merged_fields)
+        fields = extract_item_fields(hb_item)
+        merged_fields = merge_backlink_field(fields, ha_device_url)
+        payload = build_item_update_payload(hb_item, merged_fields)
         await self.async_update_hb_item(hb_item_id, payload)
 
     async def async_clear_hb_item_backlink(self, hb_item_id: str) -> None:
         """Remove Home Assistant backlink custom field from a HomeBox item."""
         hb_item = await self.async_get_hb_item(hb_item_id)
-        fields = self._extract_item_fields(hb_item)
-        merged_fields = self._merge_backlink_field(fields, None)
-        payload = self._build_item_update_payload(hb_item, merged_fields)
+        fields = extract_item_fields(hb_item)
+        merged_fields = merge_backlink_field(fields, None)
+        payload = build_item_update_payload(hb_item, merged_fields)
         await self.async_update_hb_item(hb_item_id, payload)
 
-    async def async_set_hb_item_location(
-        self, hb_item_id: str, hb_location_id: str
-    ) -> None:
+    async def async_set_hb_item_location(self, hb_item_id: str, hb_location_id: str) -> None:
         """Set location for a HomeBox item."""
         hb_item = await self.async_get_hb_item(hb_item_id)
-        fields = self._extract_item_fields(hb_item)
-        payload = self._build_item_update_payload(hb_item, fields)
+        fields = extract_item_fields(hb_item)
+        payload = build_item_update_payload(hb_item, fields)
         payload["locationId"] = hb_location_id
         await self.async_update_hb_item(hb_item_id, payload)
 
     def get_hb_item_url(self, hb_item_id: str) -> str:
         """Build HomeBox web URL for a given item."""
-        base_url = str(self._api_url).removesuffix(API_BASE_PATH + "/")
-        return f"{base_url.rstrip('/')}/item/{hb_item_id}"
+        return f"{self._host.rstrip('/')}/item/{hb_item_id}"
