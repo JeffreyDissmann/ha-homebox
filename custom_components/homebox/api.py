@@ -210,6 +210,125 @@ class HomeBoxApiClient:
             raise HomeBoxApiError("HomeBox tags response is not a list")
         return data
 
+    async def async_get_locations(self) -> list[dict[str, Any]]:
+        """Return all HomeBox locations."""
+        url = self._api_url.join(URL("v1/locations"))
+        headers = self._build_auth_headers()
+
+        try:
+            async with self._session.get(url, headers=headers) as response:
+                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
+                    raise HomeBoxAuthenticationError
+                if response.status >= HTTPStatus.BAD_REQUEST:
+                    raise HomeBoxApiError(
+                        f"HomeBox locations request failed with status {response.status}"
+                    )
+                data = await response.json()
+        except ClientError as err:
+            raise HomeBoxConnectionError from err
+
+        if not isinstance(data, list):
+            raise HomeBoxApiError("HomeBox locations response is not a list")
+        return data
+
+    async def async_create_location(self, name: str) -> dict[str, Any]:
+        """Create a HomeBox location."""
+        url = self._api_url.join(URL("v1/locations"))
+        headers = self._build_auth_headers()
+
+        try:
+            async with self._session.post(
+                url,
+                headers=headers,
+                json={
+                    "name": name,
+                    "description": "",
+                    "parentId": None,
+                },
+            ) as response:
+                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
+                    raise HomeBoxAuthenticationError
+                if response.status >= HTTPStatus.BAD_REQUEST:
+                    raise HomeBoxApiError(
+                        f"HomeBox create location failed with status {response.status}"
+                    )
+                data = await response.json()
+        except ClientError as err:
+            raise HomeBoxConnectionError from err
+
+        if not isinstance(data, dict):
+            raise HomeBoxApiError("HomeBox create location response is invalid")
+        return data
+
+    async def async_ensure_location_by_name(self, name: str) -> str:
+        """Ensure a HomeBox location with matching name exists and return its ID."""
+        normalized_name = " ".join(name.split()).strip()
+        if not normalized_name:
+            raise HomeBoxApiError("HomeBox location name must not be empty")
+
+        locations = await self.async_get_locations()
+        lookup_name = normalized_name.casefold()
+        for location in locations:
+            location_name = location.get("name")
+            location_id = location.get("id")
+            if (
+                isinstance(location_name, str)
+                and isinstance(location_id, str)
+                and location_name.casefold() == lookup_name
+            ):
+                return location_id
+
+        created = await self.async_create_location(normalized_name)
+        location_id = created.get("id")
+        if not isinstance(location_id, str):
+            raise HomeBoxApiError("Created HomeBox location has no ID")
+        return location_id
+
+    async def async_ensure_locations_by_name(
+        self, names: list[str]
+    ) -> dict[str, str]:
+        """Ensure multiple HomeBox locations exist and return name->id mapping."""
+        normalized_names = [
+            " ".join(name.split()).strip()
+            for name in names
+            if isinstance(name, str) and name.strip()
+        ]
+        if not normalized_names:
+            return {}
+
+        by_casefold: dict[str, str] = {}
+        for normalized_name in normalized_names:
+            by_casefold[normalized_name.casefold()] = normalized_name
+
+        target_casefolds = set(by_casefold)
+        location_map: dict[str, str] = {}
+
+        locations = await self.async_get_locations()
+        for location in locations:
+            location_name = location.get("name")
+            location_id = location.get("id")
+            if not isinstance(location_name, str) or not isinstance(location_id, str):
+                continue
+            key = location_name.casefold()
+            if key in target_casefolds and key not in location_map:
+                location_map[key] = location_id
+
+        for casefold_name in target_casefolds:
+            if casefold_name in location_map:
+                continue
+            normalized_name = by_casefold[casefold_name]
+            created = await self.async_create_location(normalized_name)
+            created_id = created.get("id")
+            if not isinstance(created_id, str):
+                raise HomeBoxApiError("Created HomeBox location has no ID")
+            location_map[casefold_name] = created_id
+
+        return {
+            by_casefold[casefold_name]: location_id
+            for casefold_name, location_id in location_map.items()
+            if casefold_name in by_casefold
+        }
+
     async def async_create_tag(self, name: str) -> dict[str, Any]:
         """Create a HomeBox tag."""
         url = self._api_url.join(URL("v1/tags"))
@@ -450,6 +569,16 @@ class HomeBoxApiClient:
         fields = self._extract_item_fields(hb_item)
         merged_fields = self._merge_backlink_field(fields, None)
         payload = self._build_item_update_payload(hb_item, merged_fields)
+        await self.async_update_hb_item(hb_item_id, payload)
+
+    async def async_set_hb_item_location(
+        self, hb_item_id: str, hb_location_id: str
+    ) -> None:
+        """Set location for a HomeBox item."""
+        hb_item = await self.async_get_hb_item(hb_item_id)
+        fields = self._extract_item_fields(hb_item)
+        payload = self._build_item_update_payload(hb_item, fields)
+        payload["locationId"] = hb_location_id
         await self.async_update_hb_item(hb_item_id, payload)
 
     def get_hb_item_url(self, hb_item_id: str) -> str:

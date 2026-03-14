@@ -18,7 +18,11 @@ from .api import (
     HomeBoxConnectionError,
 )
 from .const import DEFAULT_POLL_INTERVAL, DOMAIN, LINKING_NOTIFICATION_ID
-from .linking import HomeBoxTaggedItem, scan_tagged_items_for_links
+from .linking import (
+    HomeBoxTaggedItem,
+    async_sync_ha_areas_to_hb_locations,
+    scan_tagged_items_for_links,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,6 +63,7 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
         try:
             if not self.api.is_authenticated:
                 await self.api.async_authenticate(self._username, self._password)
+            await self._async_sync_ha_areas()
             data = await self.api.async_get_group_statistics()
             link_scan = await scan_tagged_items_for_links(self.api, self.config_entry)
             await self._async_update_linking_notification(link_scan.unlinked_hb_items)
@@ -72,6 +77,7 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
         except HomeBoxAuthenticationError:
             try:
                 await self.api.async_authenticate(self._username, self._password)
+                await self._async_sync_ha_areas()
                 data = await self.api.async_get_group_statistics()
                 link_scan = await scan_tagged_items_for_links(self.api, self.config_entry)
                 await self._async_update_linking_notification(link_scan.unlinked_hb_items)
@@ -90,6 +96,15 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
             raise UpdateFailed("Error communicating with HomeBox API") from err
         except HomeBoxApiError as err:
             raise UpdateFailed(f"Unexpected HomeBox API response: {err}") from err
+
+    async def _async_sync_ha_areas(self) -> None:
+        """Mirror Home Assistant areas into HomeBox locations."""
+        try:
+            await async_sync_ha_areas_to_hb_locations(self.hass, self.api)
+        except (HomeBoxApiError, HomeBoxConnectionError, HomeBoxAuthenticationError):
+            _LOGGER.warning(
+                "Unable to sync Home Assistant areas to HomeBox locations during refresh"
+            )
 
     async def _async_update_linking_notification(
         self, unlinked_hb_items: list[HomeBoxTaggedItem]

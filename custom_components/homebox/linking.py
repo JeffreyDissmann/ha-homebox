@@ -8,7 +8,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import area_registry as ar, device_registry as dr
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .api import HomeBoxApiClient
@@ -154,15 +154,17 @@ async def apply_link(
     ha_device_url = get_ha_device_url(hass, ha_device_id)
     await api.async_set_hb_item_backlink(hb_item_id, ha_device_url)
 
+    ha_device_to_hb_item[ha_device_id] = hb_item_id
+    hb_item_to_ha_device[hb_item_id] = ha_device_id
+
     device_registry = dr.async_get(hass)
     if ha_device := device_registry.async_get(ha_device_id):
+        await async_sync_linked_hb_item_location(hass, config_entry, api, ha_device_id)
         if not ha_device.configuration_url:
             device_registry.async_update_device(
                 ha_device_id, configuration_url=api.get_hb_item_url(hb_item_id)
             )
 
-    ha_device_to_hb_item[ha_device_id] = hb_item_id
-    hb_item_to_ha_device[hb_item_id] = ha_device_id
     return build_updated_options(config_entry, ha_device_to_hb_item, hb_item_to_ha_device)
 
 
@@ -258,3 +260,63 @@ def _extract_ha_device_id_from_url(url: str) -> str | None:
     if not match:
         return None
     return match.group(1)
+
+
+def _get_ha_device_area_name(hass: HomeAssistant, ha_device: dr.DeviceEntry) -> str | None:
+    """Return area name for a Home Assistant device, if set."""
+    if not ha_device.area_id:
+        return None
+    area_registry = ar.async_get(hass)
+    if area_entry := area_registry.async_get_area(ha_device.area_id):
+        return area_entry.name
+    return None
+
+
+async def async_sync_ha_areas_to_hb_locations(
+    hass: HomeAssistant,
+    api: HomeBoxApiClient,
+) -> None:
+    """Ensure all Home Assistant areas exist as HomeBox locations."""
+    area_registry = ar.async_get(hass)
+    area_names = [
+        normalized_name
+        for area_entry in area_registry.async_list_areas()
+        if (normalized_name := " ".join(area_entry.name.split()).strip())
+    ]
+    await api.async_ensure_locations_by_name(area_names)
+
+
+async def async_sync_linked_hb_item_location(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    api: HomeBoxApiClient,
+    ha_device_id: str,
+) -> None:
+    """Sync linked HomeBox item location from HA device area."""
+    ha_device_to_hb_item, _ = get_link_maps(config_entry)
+    hb_item_id = ha_device_to_hb_item.get(ha_device_id)
+    if hb_item_id is None:
+        return
+
+    device_registry = dr.async_get(hass)
+    ha_device = device_registry.async_get(ha_device_id)
+    if ha_device is None:
+        return
+
+    ha_area_name = _get_ha_device_area_name(hass, ha_device)
+    if not ha_area_name:
+        return
+
+    hb_location_id = await api.async_ensure_location_by_name(ha_area_name)
+    await api.async_set_hb_item_location(hb_item_id, hb_location_id)
+
+
+async def async_sync_all_linked_hb_item_locations(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    api: HomeBoxApiClient,
+) -> None:
+    """Sync HomeBox item locations for all linked Home Assistant devices."""
+    ha_device_to_hb_item, _ = get_link_maps(config_entry)
+    for ha_device_id in ha_device_to_hb_item:
+        await async_sync_linked_hb_item_location(hass, config_entry, api, ha_device_id)
