@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .api import HomeBoxApiClient
@@ -150,6 +151,13 @@ async def apply_link(
 
     ha_device_url = get_ha_device_url(hass, ha_device_id)
     await api.async_set_hb_item_backlink(hb_item_id, ha_device_url)
+
+    device_registry = dr.async_get(hass)
+    if ha_device := device_registry.async_get(ha_device_id):
+        if not ha_device.configuration_url:
+            device_registry.async_update_device(
+                ha_device_id, configuration_url=api.get_hb_item_url(hb_item_id)
+            )
 
     ha_device_to_hb_item[ha_device_id] = hb_item_id
     hb_item_to_ha_device[hb_item_id] = ha_device_id

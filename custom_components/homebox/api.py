@@ -451,3 +451,8 @@ class HomeBoxApiClient:
         merged_fields = self._merge_backlink_field(fields, None)
         payload = self._build_item_update_payload(hb_item, merged_fields)
         await self.async_update_hb_item(hb_item_id, payload)
+
+    def get_hb_item_url(self, hb_item_id: str) -> str:
+        """Build HomeBox web URL for a given item."""
+        base_url = str(self._api_url).removesuffix(API_BASE_PATH + "/")
+        return f"{base_url.rstrip('/')}/item/{hb_item_id}"
