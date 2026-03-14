@@ -6,9 +6,14 @@ from dataclasses import dataclass
 import re
 from typing import Any
 
+from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import area_registry as ar, device_registry as dr
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .api import HomeBoxApiClient
@@ -169,6 +174,7 @@ async def apply_link(
 
 
 async def remove_link(
+    hass: HomeAssistant,
     config_entry: ConfigEntry,
     api: HomeBoxApiClient,
     ha_device_id: str,
@@ -182,9 +188,16 @@ async def remove_link(
         )
 
     await api.async_clear_hb_item_backlink(hb_item_id)
-
     ha_device_to_hb_item.pop(ha_device_id, None)
     hb_item_to_ha_device.pop(hb_item_id, None)
+    _async_finalize_ha_device_unlink(
+        hass,
+        config_entry_id=config_entry.entry_id,
+        ha_device_id=ha_device_id,
+        ha_device_to_hb_item=ha_device_to_hb_item,
+        api=api,
+        hb_item_id=hb_item_id,
+    )
     return build_updated_options(config_entry, ha_device_to_hb_item, hb_item_to_ha_device)
 
 
@@ -201,10 +214,11 @@ async def async_cleanup_unlinked_hb_backlinks(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
     api: HomeBoxApiClient,
-) -> int:
+) -> tuple[int, dict[str, Any] | None]:
     """Clear HomeBox backlink fields for tagged items not linked in HA."""
     ha_device_to_hb_item, hb_item_to_ha_device = get_link_maps(config_entry)
     device_registry = dr.async_get(hass)
+    maps_changed = False
 
     tag_id = await api.async_ensure_link_tag()
     tagged_items = await api.async_get_hb_items_by_tag(tag_id)
@@ -214,7 +228,37 @@ async def async_cleanup_unlinked_hb_backlinks(
         hb_item_id = tagged_item.get("id")
         if not isinstance(hb_item_id, str):
             continue
-        if hb_item_id in hb_item_to_ha_device:
+
+        mapped_ha_device_id = hb_item_to_ha_device.get(hb_item_id)
+        if mapped_ha_device_id is not None:
+            mapped_ha_device = device_registry.async_get(mapped_ha_device_id)
+            expected_hb_item_id = ha_device_to_hb_item.get(mapped_ha_device_id)
+            if mapped_ha_device is not None and expected_hb_item_id == hb_item_id:
+                continue
+
+            await api.async_clear_hb_item_backlink(hb_item_id)
+            cleaned += 1
+            hb_item_to_ha_device.pop(hb_item_id, None)
+            if expected_hb_item_id == hb_item_id:
+                ha_device_to_hb_item.pop(mapped_ha_device_id, None)
+                _async_finalize_ha_device_unlink(
+                    hass,
+                    config_entry_id=config_entry.entry_id,
+                    ha_device_id=mapped_ha_device_id,
+                    ha_device_to_hb_item=ha_device_to_hb_item,
+                    api=api,
+                    hb_item_id=hb_item_id,
+                )
+            else:
+                _async_finalize_ha_device_unlink(
+                    hass,
+                    config_entry_id=config_entry.entry_id,
+                    ha_device_id=mapped_ha_device_id,
+                    ha_device_to_hb_item=ha_device_to_hb_item,
+                    api=None,
+                    hb_item_id=None,
+                )
+            maps_changed = True
             continue
 
         full_hb_item = await api.async_get_hb_item(hb_item_id)
@@ -234,7 +278,12 @@ async def async_cleanup_unlinked_hb_backlinks(
             await api.async_clear_hb_item_backlink(hb_item_id)
             cleaned += 1
 
-    return cleaned
+    if maps_changed:
+        return (
+            cleaned,
+            build_updated_options(config_entry, ha_device_to_hb_item, hb_item_to_ha_device),
+        )
+    return cleaned, None
 
 
 def _extract_backlink_url(hb_item: dict[str, Any]) -> str | None:
@@ -320,3 +369,87 @@ async def async_sync_all_linked_hb_item_locations(
     ha_device_to_hb_item, _ = get_link_maps(config_entry)
     for ha_device_id in ha_device_to_hb_item:
         await async_sync_linked_hb_item_location(hass, config_entry, api, ha_device_id)
+
+
+async def async_cleanup_removed_ha_device_link(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    api: HomeBoxApiClient,
+    ha_device_id: str,
+) -> dict[str, Any] | None:
+    """Clean up mapping and HomeBox backlink when a linked HA device is removed."""
+    ha_device_to_hb_item, hb_item_to_ha_device = get_link_maps(config_entry)
+    hb_item_id = ha_device_to_hb_item.get(ha_device_id)
+    if hb_item_id is None:
+        return None
+
+    await api.async_clear_hb_item_backlink(hb_item_id)
+    ha_device_to_hb_item.pop(ha_device_id, None)
+    hb_item_to_ha_device.pop(hb_item_id, None)
+    _async_finalize_ha_device_unlink(
+        hass,
+        config_entry_id=config_entry.entry_id,
+        ha_device_id=ha_device_id,
+        ha_device_to_hb_item=ha_device_to_hb_item,
+        api=api,
+        hb_item_id=hb_item_id,
+    )
+    return build_updated_options(config_entry, ha_device_to_hb_item, hb_item_to_ha_device)
+
+
+def _async_finalize_ha_device_unlink(
+    hass: HomeAssistant,
+    config_entry_id: str,
+    ha_device_id: str,
+    ha_device_to_hb_item: dict[str, str],
+    api: HomeBoxApiClient | None,
+    hb_item_id: str | None,
+) -> None:
+    """Apply local HA-side cleanup for a device unlink."""
+    if ha_device_id in ha_device_to_hb_item:
+        return
+
+    if api is not None and hb_item_id is not None:
+        _async_clear_configuration_url_if_matching(hass, ha_device_id, api, hb_item_id)
+
+    _async_remove_linked_hb_id_entity(hass, config_entry_id, ha_device_id)
+    _async_detach_ha_device_from_homebox_entry(hass, config_entry_id, ha_device_id)
+
+
+def _async_clear_configuration_url_if_matching(
+    hass: HomeAssistant,
+    ha_device_id: str,
+    api: HomeBoxApiClient,
+    hb_item_id: str,
+) -> None:
+    """Clear device configuration URL if it points to the linked HomeBox item."""
+    device_registry = dr.async_get(hass)
+    if ha_device := device_registry.async_get(ha_device_id):
+        hb_item_url = api.get_hb_item_url(hb_item_id).rstrip("/")
+        device_url = (ha_device.configuration_url or "").rstrip("/")
+        if device_url == hb_item_url:
+            device_registry.async_update_device(ha_device_id, configuration_url=None)
+
+
+def _async_remove_linked_hb_id_entity(
+    hass: HomeAssistant, config_entry_id: str, ha_device_id: str
+) -> None:
+    """Remove linked HomeBox ID sensor entity from entity registry."""
+    unique_id = f"{config_entry_id}_{ha_device_id}_hb_item_id"
+    entity_registry = er.async_get(hass)
+    if entity_id := entity_registry.async_get_entity_id(
+        SENSOR_DOMAIN, "homebox", unique_id
+    ):
+        entity_registry.async_remove(entity_id)
+
+
+def _async_detach_ha_device_from_homebox_entry(
+    hass: HomeAssistant, config_entry_id: str, ha_device_id: str
+) -> None:
+    """Detach HomeBox config entry from linked HA device."""
+    device_registry = dr.async_get(hass)
+    if device := device_registry.async_get(ha_device_id):
+        if config_entry_id in device.config_entries:
+            device_registry.async_update_device(
+                ha_device_id, remove_config_entry_id=config_entry_id
+            )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
@@ -18,6 +19,7 @@ from .api import (
 from .const import CONF_HA_DEVICE_TO_HB_ITEM, CONF_HB_ITEM_TO_HA_DEVICE, CONF_LINKS
 from .coordinator import HomeBoxConfigEntry, HomeBoxDataUpdateCoordinator
 from .linking import (
+    async_cleanup_removed_ha_device_link,
     async_sync_all_linked_hb_item_locations,
     async_sync_linked_hb_item_location,
 )
@@ -71,11 +73,48 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomeBoxConfigEntry) -> b
         event: Event[dr.EventDeviceRegistryUpdatedData],
     ) -> None:
         """Handle Home Assistant device updates."""
-        if event.data["action"] != "update":
+        action = event.data["action"]
+        if action == "update":
+            if "area_id" not in event.data["changes"]:
+                return
+            hass.async_create_task(
+                _async_sync_location_for_device(event.data["device_id"])
+            )
             return
-        if "area_id" not in event.data["changes"]:
+
+        if action != "remove":
             return
-        hass.async_create_task(_async_sync_location_for_device(event.data["device_id"]))
+
+        async def _async_cleanup_removed_device() -> None:
+            current_entry = hass.config_entries.async_get_entry(entry.entry_id)
+            if current_entry is None or current_entry.state is not ConfigEntryState.LOADED:
+                return
+
+            try:
+                new_options = await async_cleanup_removed_ha_device_link(
+                    hass, entry, api, event.data["device_id"]
+                )
+            except (
+                HomeBoxApiError,
+                HomeBoxAuthenticationError,
+                HomeBoxConnectionError,
+            ):
+                _LOGGER.warning(
+                    "Unable to clean up HomeBox link after HA device removal"
+                )
+                return
+
+            if new_options is not None:
+                current_entry = hass.config_entries.async_get_entry(entry.entry_id)
+                if (
+                    current_entry is not None
+                    and current_entry.state is ConfigEntryState.LOADED
+                ):
+                    hass.config_entries.async_update_entry(
+                        current_entry, options=new_options
+                    )
+
+        hass.async_create_task(_async_cleanup_removed_device())
 
     entry.async_on_unload(
         hass.bus.async_listen(

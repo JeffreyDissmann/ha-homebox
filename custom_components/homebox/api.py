@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from http import HTTPStatus
+import re
 from typing import Any
 
 from aiohttp import ClientError, ClientResponse, ClientSession
@@ -452,20 +453,18 @@ class HomeBoxApiClient:
         found = False
 
         for field in fields:
-            name = field.get("name")
-            if name == LINK_BACKLINK_FIELD_NAME:
+            if HomeBoxApiClient._is_backlink_field(field):
                 found = True
-                if backlink_url:
-                    merged.append(
-                        {
-                            "id": field.get("id"),
-                            "type": "text",
-                            "name": LINK_BACKLINK_FIELD_NAME,
-                            "textValue": backlink_url,
-                            "numberValue": field.get("numberValue") or 0,
-                            "booleanValue": field.get("booleanValue") or False,
-                        }
-                    )
+                merged.append(
+                    {
+                        "id": field.get("id"),
+                        "type": "text",
+                        "name": field.get("name") or LINK_BACKLINK_FIELD_NAME,
+                        "textValue": backlink_url or "",
+                        "numberValue": field.get("numberValue") or 0,
+                        "booleanValue": field.get("booleanValue") or False,
+                    }
+                )
                 continue
             merged.append(field)
 
@@ -481,6 +480,24 @@ class HomeBoxApiClient:
             )
 
         return merged
+
+    @staticmethod
+    def _is_backlink_field(field: dict[str, Any]) -> bool:
+        """Return True if a field is the managed Home Assistant backlink field."""
+        name = field.get("name")
+        if isinstance(name, str) and name == LINK_BACKLINK_FIELD_NAME:
+            return True
+
+        if name not in (None, ""):
+            return False
+
+        text_value = field.get("textValue")
+        if not isinstance(text_value, str):
+            return False
+
+        return bool(
+            re.search(r"/config/devices/device/[^/?#\s]+/?$", text_value.strip())
+        )
 
     @staticmethod
     def _build_item_update_payload(

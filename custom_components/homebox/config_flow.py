@@ -323,6 +323,7 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
             selected_ha_device_id, selected_hb_item_id = selected.split("|", 1)
             try:
                 new_options = await remove_link(
+                    self.hass,
                     self.config_entry,
                     coordinator.api,
                     selected_ha_device_id,
@@ -352,9 +353,12 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
     ) -> ConfigFlowResult:
         """Manually resync tagged hb_item scan."""
         coordinator = self.config_entry.runtime_data
-        await async_cleanup_unlinked_hb_backlinks(
+        _, new_options = await async_cleanup_unlinked_hb_backlinks(
             self.hass, self.config_entry, coordinator.api
         )
+        if new_options is not None:
+            self.options.clear()
+            self.options.update(new_options)
         await coordinator.async_refresh()
         return self.async_create_entry(title="", data=self.options)
 
