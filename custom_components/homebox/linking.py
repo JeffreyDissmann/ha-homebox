@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
@@ -191,3 +193,68 @@ def list_link_rows(config_entry: ConfigEntry) -> list[dict[str, str]]:
         {CONF_HA_DEVICE_ID: ha_device_id, CONF_HB_ITEM_ID: hb_item_id}
         for ha_device_id, hb_item_id in ha_device_to_hb_item.items()
     ]
+
+
+async def async_cleanup_unlinked_hb_backlinks(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    api: HomeBoxApiClient,
+) -> int:
+    """Clear HomeBox backlink fields for tagged items not linked in HA."""
+    ha_device_to_hb_item, hb_item_to_ha_device = get_link_maps(config_entry)
+    device_registry = dr.async_get(hass)
+
+    tag_id = await api.async_ensure_link_tag()
+    tagged_items = await api.async_get_hb_items_by_tag(tag_id)
+    cleaned = 0
+
+    for tagged_item in tagged_items:
+        hb_item_id = tagged_item.get("id")
+        if not isinstance(hb_item_id, str):
+            continue
+        if hb_item_id in hb_item_to_ha_device:
+            continue
+
+        full_hb_item = await api.async_get_hb_item(hb_item_id)
+        backlink_url = _extract_backlink_url(full_hb_item)
+        if not backlink_url:
+            continue
+
+        linked_ha_device_id = _extract_ha_device_id_from_url(backlink_url)
+        if linked_ha_device_id is None:
+            await api.async_clear_hb_item_backlink(hb_item_id)
+            cleaned += 1
+            continue
+
+        linked_ha_device = device_registry.async_get(linked_ha_device_id)
+        expected_hb_item_id = ha_device_to_hb_item.get(linked_ha_device_id)
+        if linked_ha_device is None or expected_hb_item_id != hb_item_id:
+            await api.async_clear_hb_item_backlink(hb_item_id)
+            cleaned += 1
+
+    return cleaned
+
+
+def _extract_backlink_url(hb_item: dict[str, Any]) -> str | None:
+    """Extract Home Assistant backlink URL from HomeBox custom fields."""
+    item_fields = hb_item.get("fields")
+    if not isinstance(item_fields, list):
+        return None
+
+    for field in item_fields:
+        if (
+            isinstance(field, dict)
+            and field.get("name") == LINK_BACKLINK_FIELD_NAME
+            and isinstance(field.get("textValue"), str)
+            and field.get("textValue")
+        ):
+            return field["textValue"]
+    return None
+
+
+def _extract_ha_device_id_from_url(url: str) -> str | None:
+    """Extract Home Assistant device ID from a device URL."""
+    match = re.search(r"/config/devices/device/([^/?#]+)", url)
+    if not match:
+        return None
+    return match.group(1)

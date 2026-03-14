@@ -37,7 +37,12 @@ from .const import (
     DEFAULT_NAME,
     DOMAIN,
 )
-from .linking import apply_link, list_link_rows, remove_link
+from .linking import (
+    apply_link,
+    async_cleanup_unlinked_hb_backlinks,
+    list_link_rows,
+    remove_link,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -346,7 +351,11 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manually resync tagged hb_item scan."""
-        await self.config_entry.runtime_data.async_refresh()
+        coordinator = self.config_entry.runtime_data
+        await async_cleanup_unlinked_hb_backlinks(
+            self.hass, self.config_entry, coordinator.api
+        )
+        await coordinator.async_refresh()
         return self.async_create_entry(title="", data=self.options)
 
 
