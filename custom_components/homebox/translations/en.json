@@ -37,6 +37,7 @@
     "options": {
         "step": {
             "init": {
+                "description": "{link_status}",
                 "menu_options": {
                     "link_ha_device": "Create device link",
                     "unlink_ha_device": "Remove device link",

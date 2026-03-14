@@ -154,9 +154,20 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage options for HomeBox."""
+        coordinator = self.config_entry.runtime_data
+        await coordinator.async_refresh()
+        unlinked_count = len(coordinator.data.unlinked_hb_items)
+        if unlinked_count:
+            link_status = (
+                f"{unlinked_count} tagged HomeBox item(s) are ready to be linked."
+            )
+        else:
+            link_status = "No tagged HomeBox items are waiting for linking."
+
         return self.async_show_menu(
             step_id="init",
             menu_options=["link_ha_device", "unlink_ha_device", "resync"],
+            description_placeholders={"link_status": link_status},
         )
 
     async def async_step_link_ha_device(
