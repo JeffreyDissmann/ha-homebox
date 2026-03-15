@@ -2,16 +2,23 @@
   "config": {
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_service%]",
+      "missing_ha_device": "No Home Assistant device selected.",
       "missing_hb_item": "No HomeBox item selected.",
       "no_ha_devices": "No Home Assistant devices available for linking.",
       "no_links": "No links configured yet.",
-      "no_unlinked_hb_items": "No unlinked HomeBox items with tag HomeAssistant were found."
+      "no_unlinked_ha_devices": "No unlinked Home Assistant devices are available.",
+      "no_unlinked_hb_items": "No unlinked HomeBox items with the Home Assistant tag were found."
     },
     "error": {
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "invalid_auth_homebox": "Login failed. Verify the HomeBox URL and port (often :7745 or Docker-mapped :3100), and confirm the email address/password are correct for HomeBox local login.",
+      "create_hb_item_failed": "Failed to create and link the HomeBox item. Check logs and try again.",
+      "image_download_failed": "Failed to download the image URL.",
+      "image_not_image": "The image URL did not return an image content type.",
+      "image_too_large": "The image is too large (maximum 10 MB).",
+      "invalid_image_url": "Image URL must be a valid http(s) URL.",
       "link_conflict": "Cannot create link because this Home Assistant device or HomeBox item is already linked.",
-      "unlink_conflict": "Cannot remove link because the selected mapping no longer matches.",
+      "unlink_conflict": "Cannot remove link because the selected link no longer matches.",
       "unknown": "[%key:common::config_flow::error::unknown%]"
     },
     "step": {
@@ -37,41 +44,68 @@
   "options": {
     "step": {
       "init": {
-        "description": "{link_status}",
         "menu_options": {
-          "link_ha_device": "Create device link",
-          "unlink_ha_device": "Remove device link",
-          "resync": "Refresh HomeBox items"
+          "create_hb_item_from_ha_device": "Create and link HomeBox item from Home Assistant device",
+          "link_ha_device": "Link existing HomeBox item to Home Assistant device",
+          "unlink_ha_device": "Unlink Home Assistant device and HomeBox item",
+          "resync": "Refresh tagged HomeBox items and clean up links"
+        }
+      },
+      "create_hb_item_from_ha_device": {
+        "title": "Select Home Assistant device",
+        "data": {
+          "ha_device_id": "Unlinked Home Assistant device"
+        }
+      },
+      "create_hb_item_details": {
+        "title": "Create HomeBox item",
+        "description": "Device: {device_name}\n\nLocation from Home Assistant area: {location_name}",
+        "data": {
+          "hb_item_description": "Description",
+          "hb_item_image_url": "Image URL (optional)",
+          "hb_item_manufacturer": "Manufacturer",
+          "hb_item_model_number": "Model number",
+          "hb_item_name": "Name",
+          "hb_item_purchase_price": "Value / purchase price",
+          "hb_item_serial_number": "Serial number"
         }
       },
       "link_ha_device": {
-        "title": "Choose HomeBox item",
+        "title": "Select existing HomeBox item",
+        "description": "{unlinked_count} unlinked tagged HomeBox item(s) available.",
         "data": {
-          "hb_item_id": "HomeBox item"
+          "hb_item_id": "Unlinked HomeBox item"
         }
       },
       "choose_ha_device": {
-        "title": "Choose Home Assistant device",
+        "title": "Select Home Assistant device to link",
         "data": {
-          "ha_device_id": "Home Assistant device"
+          "ha_device_id": "Unlinked Home Assistant device"
         }
       },
       "unlink_ha_device": {
-        "title": "Choose link to remove",
+        "title": "Select link to remove",
         "data": {
-          "link_action": "Linked device and item"
+          "ha_device_id": "Linked Home Assistant device"
         }
       }
     },
     "abort": {
+      "missing_ha_device": "No Home Assistant device selected.",
       "missing_hb_item": "No HomeBox item selected.",
       "no_ha_devices": "No Home Assistant devices available for linking.",
       "no_links": "No links configured yet.",
-      "no_unlinked_hb_items": "No unlinked HomeBox items with tag HomeAssistant were found."
+      "no_unlinked_ha_devices": "No unlinked Home Assistant devices are available.",
+      "no_unlinked_hb_items": "No unlinked HomeBox items with the Home Assistant tag were found."
     },
     "error": {
+      "create_hb_item_failed": "Failed to create and link the HomeBox item. Check logs and try again.",
+      "image_download_failed": "Failed to download the image URL.",
+      "image_not_image": "The image URL did not return an image content type.",
+      "image_too_large": "The image is too large (maximum 10 MB).",
+      "invalid_image_url": "Image URL must be a valid http(s) URL.",
       "link_conflict": "Cannot create link because this Home Assistant device or HomeBox item is already linked.",
-      "unlink_conflict": "Cannot remove link because the selected mapping no longer matches."
+      "unlink_conflict": "Cannot remove link because the selected link no longer matches."
     }
   },
   "entity": {

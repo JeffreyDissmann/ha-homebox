@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from http import HTTPStatus
+import mimetypes
+from pathlib import PurePosixPath
 from typing import Any
 
-from aiohttp import ClientError, ClientResponse, ClientSession
+from aiohttp import ClientError, ClientResponse, ClientSession, FormData
 from yarl import URL
 
 from homeassistant.util.network import normalize_url
@@ -17,6 +19,8 @@ from .item_fields import (
     merge_backlink_field,
 )
 from .models import HomeBoxGroupStatistics, HomeBoxItemSummary
+
+MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
 
 
 def normalize_homebox_host(host: str) -> str:
@@ -37,6 +41,22 @@ class HomeBoxAuthenticationError(HomeBoxApiError):
 
 class HomeBoxConnectionError(HomeBoxApiError):
     """Connection to HomeBox failed."""
+
+
+class HomeBoxInvalidImageUrlError(HomeBoxApiError):
+    """Provided image URL is invalid."""
+
+
+class HomeBoxImageDownloadError(HomeBoxApiError):
+    """Image download from URL failed."""
+
+
+class HomeBoxImageTooLargeError(HomeBoxApiError):
+    """Downloaded image exceeds allowed size."""
+
+
+class HomeBoxImageContentTypeError(HomeBoxApiError):
+    """Downloaded file is not an image."""
 
 
 class HomeBoxApiClient:
@@ -412,6 +432,160 @@ class HomeBoxApiClient:
         if not isinstance(data, dict):
             raise HomeBoxApiError("HomeBox item update response is invalid")
         return data
+
+    async def async_delete_hb_item(self, hb_item_id: str) -> None:
+        """Delete a HomeBox item."""
+        url = self._api_url.join(URL(f"v1/items/{hb_item_id}"))
+        headers = self._build_auth_headers()
+        try:
+            async with self._session.delete(url, headers=headers) as response:
+                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
+                    raise HomeBoxAuthenticationError
+                if response.status == HTTPStatus.NOT_FOUND:
+                    return
+                if response.status >= HTTPStatus.BAD_REQUEST:
+                    raise HomeBoxApiError(
+                        f"HomeBox delete item failed with status {response.status}"
+                    )
+        except ClientError as err:
+            raise HomeBoxConnectionError from err
+
+    async def async_create_hb_item(
+        self,
+        *,
+        name: str,
+        location_id: str | None,
+        tag_ids: list[str] | None,
+    ) -> str:
+        """Create a HomeBox item and return its ID."""
+        payload: dict[str, Any] = {"name": name}
+        if location_id:
+            payload["locationId"] = location_id
+        if tag_ids:
+            payload["tagIds"] = tag_ids
+
+        data = await self._async_request_json(
+            "POST",
+            "v1/items",
+            auth_required=True,
+            error_context="create item",
+            payload=payload,
+        )
+        if not isinstance(data, dict):
+            raise HomeBoxApiError("HomeBox create item response is invalid")
+
+        hb_item_id = data.get("id")
+        if not isinstance(hb_item_id, str) or not hb_item_id:
+            raise HomeBoxApiError("HomeBox create item response missing item ID")
+        return hb_item_id
+
+    async def async_update_hb_item_details(
+        self,
+        hb_item_id: str,
+        *,
+        name: str,
+        description: str,
+        manufacturer: str,
+        model_number: str,
+        serial_number: str,
+        purchase_price: float,
+        location_id: str | None,
+    ) -> None:
+        """Update editable HomeBox item details after creation."""
+        hb_item = await self.async_get_hb_item(hb_item_id)
+        fields = extract_item_fields(hb_item)
+        payload = build_item_update_payload(hb_item, fields)
+        payload["name"] = name
+        payload["description"] = description
+        payload["manufacturer"] = manufacturer
+        payload["modelNumber"] = model_number
+        payload["serialNumber"] = serial_number
+        payload["purchasePrice"] = purchase_price
+        if location_id:
+            payload["locationId"] = location_id
+        await self.async_update_hb_item(hb_item_id, payload)
+
+    @staticmethod
+    def _validate_image_url(image_url: str) -> URL:
+        """Validate and normalize provided image URL."""
+        normalized = image_url.strip()
+        if not normalized:
+            raise HomeBoxInvalidImageUrlError("Image URL is empty")
+        url = URL(normalized)
+        if url.scheme not in {"http", "https"}:
+            raise HomeBoxInvalidImageUrlError("Image URL must use http or https")
+        if not url.host:
+            raise HomeBoxInvalidImageUrlError("Image URL must include a host")
+        return url
+
+    @staticmethod
+    def _infer_image_name(image_url: URL, content_type: str | None) -> str:
+        """Infer a safe filename for an image attachment upload."""
+        path_name = PurePosixPath(image_url.path or "").name
+        if path_name and "." in path_name:
+            return path_name
+
+        extension = ""
+        if content_type:
+            guessed = mimetypes.guess_extension(content_type.split(";", 1)[0].strip())
+            if guessed:
+                extension = guessed
+        if not extension:
+            extension = ".jpg"
+        return f"ha_import{extension}"
+
+    async def async_add_hb_item_photo_from_url(
+        self,
+        hb_item_id: str,
+        image_url: str,
+    ) -> None:
+        """Download an image URL and upload it as a HomeBox photo attachment."""
+        url = self._validate_image_url(image_url)
+        try:
+            async with self._session.get(url) as response:
+                if response.status >= HTTPStatus.BAD_REQUEST:
+                    raise HomeBoxImageDownloadError(
+                        f"Image download failed with status {response.status}"
+                    )
+                content_type = (response.headers.get("Content-Type") or "").lower()
+                if not content_type.startswith("image/"):
+                    raise HomeBoxImageContentTypeError(
+                        "Image URL did not return an image content type"
+                    )
+                image_chunks = bytearray()
+                async for chunk in response.content.iter_chunked(64 * 1024):
+                    image_chunks.extend(chunk)
+                    if len(image_chunks) > MAX_IMAGE_SIZE_BYTES:
+                        raise HomeBoxImageTooLargeError("Image is larger than 10MB")
+                image_data = bytes(image_chunks)
+        except ClientError as err:
+            raise HomeBoxImageDownloadError from err
+
+        upload_url = self._api_url.join(URL(f"v1/items/{hb_item_id}/attachments"))
+        headers = self._build_auth_headers()
+
+        form = FormData()
+        form.add_field(
+            "file",
+            image_data,
+            filename=self._infer_image_name(url, content_type),
+            content_type=content_type.split(";", 1)[0].strip(),
+        )
+        form.add_field("name", self._infer_image_name(url, content_type))
+        form.add_field("type", "photo")
+        form.add_field("primary", "true")
+
+        try:
+            async with self._session.post(upload_url, headers=headers, data=form) as response:
+                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
+                    raise HomeBoxAuthenticationError
+                if response.status >= HTTPStatus.BAD_REQUEST:
+                    raise HomeBoxApiError(
+                        f"HomeBox item attachment upload failed with status {response.status}"
+                    )
+                await response.json()
+        except ClientError as err:
+            raise HomeBoxConnectionError from err
 
     async def async_set_hb_item_backlink(
         self, hb_item_id: str, ha_device_url: str

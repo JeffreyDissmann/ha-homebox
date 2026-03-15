@@ -10,6 +10,7 @@ from typing import Any
 import voluptuous as vol
 from yarl import URL
 
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
@@ -19,7 +20,7 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import device_registry as dr, selector
+from homeassistant.helpers import area_registry as ar, device_registry as dr, selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import (
@@ -27,13 +28,23 @@ from .api import (
     HomeBoxApiError,
     HomeBoxAuthenticationError,
     HomeBoxConnectionError,
+    HomeBoxImageContentTypeError,
+    HomeBoxImageDownloadError,
+    HomeBoxImageTooLargeError,
+    HomeBoxInvalidImageUrlError,
     normalize_homebox_host,
 )
 from .const import (
     CONF_AREA,
     CONF_HA_DEVICE_ID,
+    CONF_HB_ITEM_DESCRIPTION,
     CONF_HB_ITEM_ID,
-    CONF_LINK_ACTION,
+    CONF_HB_ITEM_IMAGE_URL,
+    CONF_HB_ITEM_MANUFACTURER,
+    CONF_HB_ITEM_MODEL_NUMBER,
+    CONF_HB_ITEM_NAME,
+    CONF_HB_ITEM_PURCHASE_PRICE,
+    CONF_HB_ITEM_SERIAL_NUMBER,
     DEFAULT_NAME,
     DOMAIN,
 )
@@ -41,7 +52,6 @@ from .linking import (
     apply_link,
     async_cleanup_unlinked_hb_backlinks,
     get_link_maps,
-    list_link_rows,
     remove_link,
 )
 
@@ -150,25 +160,212 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
         super().__init__(config_entry)
         self._selected_hb_item_id: str | None = None
         self._selected_hb_item_name: str | None = None
+        self._selected_ha_device_id_for_create: str | None = None
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage options for HomeBox."""
-        coordinator = self.config_entry.runtime_data
-        await coordinator.async_refresh()
-        unlinked_count = len(coordinator.data.unlinked_hb_items)
-        if unlinked_count:
-            link_status = (
-                f"{unlinked_count} tagged HomeBox item(s) are ready to be linked."
-            )
-        else:
-            link_status = "No tagged HomeBox items are waiting for linking."
-
         return self.async_show_menu(
             step_id="init",
-            menu_options=["link_ha_device", "unlink_ha_device", "resync"],
-            description_placeholders={"link_status": link_status},
+            menu_options=[
+                "create_hb_item_from_ha_device",
+                "link_ha_device",
+                "unlink_ha_device",
+                "resync",
+            ],
+        )
+
+    async def async_step_create_hb_item_from_ha_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select an unlinked HA device to create a HomeBox item from."""
+        if not _get_unlinked_named_ha_devices(self.hass, self.config_entry):
+            return self.async_abort(reason="no_unlinked_ha_devices")
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            selected_device_id = user_input[CONF_HA_DEVICE_ID]
+            available_ids = {
+                device.id
+                for device in _get_unlinked_named_ha_devices(
+                    self.hass, self.config_entry
+                )
+            }
+            if selected_device_id not in available_ids:
+                errors["base"] = "link_conflict"
+            else:
+                self._selected_ha_device_id_for_create = selected_device_id
+                return await self.async_step_create_hb_item_details()
+
+        return self.async_show_form(
+            step_id="create_hb_item_from_ha_device",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HA_DEVICE_ID): selector.DeviceSelector(
+                        selector.DeviceSelectorConfig()
+                    )
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_create_hb_item_details(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Review/edit HomeBox item details and create + link item."""
+        selected_ha_device_id = self._selected_ha_device_id_for_create
+        if selected_ha_device_id is None:
+            return self.async_abort(reason="missing_ha_device")
+
+        device_registry = dr.async_get(self.hass)
+        ha_device = device_registry.async_get(selected_ha_device_id)
+        if ha_device is None:
+            return self.async_abort(reason="missing_ha_device")
+
+        device_name = ha_device.name_by_user or ha_device.name or ha_device.id
+        manufacturer = ha_device.manufacturer or ""
+        model_number = _format_ha_model_number(ha_device)
+        serial_number = ha_device.serial_number or ""
+        area_name = _get_ha_device_area_name(self.hass, ha_device)
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            purchase_price = float(user_input[CONF_HB_ITEM_PURCHASE_PRICE])
+            if purchase_price < 0:
+                errors["base"] = "create_hb_item_failed"
+            else:
+                coordinator = self.config_entry.runtime_data
+                api = coordinator.api
+                created_hb_item_id: str | None = None
+                image_warning: str | None = None
+                try:
+                    ha_device_to_hb_item, _ = get_link_maps(self.config_entry)
+                    if selected_ha_device_id in ha_device_to_hb_item:
+                        errors["base"] = "link_conflict"
+                    else:
+                        tag_id = await api.async_ensure_link_tag()
+                        location_id = (
+                            await api.async_ensure_location_by_name(area_name)
+                            if area_name
+                            else None
+                        )
+                        created_hb_item_id = await api.async_create_hb_item(
+                            name=user_input[CONF_HB_ITEM_NAME],
+                            location_id=location_id,
+                            tag_ids=[tag_id],
+                        )
+                        await api.async_update_hb_item_details(
+                            created_hb_item_id,
+                            name=user_input[CONF_HB_ITEM_NAME],
+                            description=user_input.get(CONF_HB_ITEM_DESCRIPTION, ""),
+                            manufacturer=user_input.get(CONF_HB_ITEM_MANUFACTURER, ""),
+                            model_number=user_input.get(CONF_HB_ITEM_MODEL_NUMBER, ""),
+                            serial_number=user_input.get(CONF_HB_ITEM_SERIAL_NUMBER, ""),
+                            purchase_price=purchase_price,
+                            location_id=location_id,
+                        )
+
+                        image_url = user_input.get(CONF_HB_ITEM_IMAGE_URL, "").strip()
+                        if image_url:
+                            try:
+                                await api.async_add_hb_item_photo_from_url(
+                                    created_hb_item_id, image_url
+                                )
+                            except HomeBoxInvalidImageUrlError:
+                                image_warning = "invalid_image_url"
+                            except HomeBoxImageContentTypeError:
+                                image_warning = "image_not_image"
+                            except HomeBoxImageTooLargeError:
+                                image_warning = "image_too_large"
+                            except HomeBoxImageDownloadError:
+                                image_warning = "image_download_failed"
+                            except (
+                                HomeBoxApiError,
+                                HomeBoxAuthenticationError,
+                                HomeBoxConnectionError,
+                            ):
+                                image_warning = "image_download_failed"
+
+                        # Apply standard link side effects and option persistence.
+                        new_options = await apply_link(
+                            self.hass,
+                            self.config_entry,
+                            api,
+                            selected_ha_device_id,
+                            created_hb_item_id,
+                        )
+                        if image_warning is not None:
+                            persistent_notification.async_create(
+                                self.hass,
+                                (
+                                    "HomeBox item was created and linked, but image upload "
+                                    f"failed ({image_warning}). You can add the image later "
+                                    "directly in HomeBox."
+                                ),
+                                title="HomeBox image upload warning",
+                                notification_id=(
+                                    f"{DOMAIN}_image_upload_warning_"
+                                    f"{self.config_entry.entry_id}"
+                                ),
+                            )
+                        self.options.clear()
+                        self.options.update(new_options)
+                        return self.async_create_entry(title="", data=self.options)
+                except ValueError:
+                    errors["base"] = "link_conflict"
+                except (
+                    HomeBoxApiError,
+                    HomeBoxAuthenticationError,
+                    HomeBoxConnectionError,
+                ):
+                    errors["base"] = "create_hb_item_failed"
+                finally:
+                    if (
+                        errors
+                        and created_hb_item_id is not None
+                        and errors.get("base") != "image_download_failed"
+                    ):
+                        try:
+                            await api.async_delete_hb_item(created_hb_item_id)
+                        except (
+                            HomeBoxApiError,
+                            HomeBoxAuthenticationError,
+                            HomeBoxConnectionError,
+                        ):
+                            _LOGGER.warning(
+                                "Unable to roll back HomeBox item %s after create/link failure",
+                                created_hb_item_id,
+                            )
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_HB_ITEM_NAME, default=device_name): str,
+                vol.Optional(
+                    CONF_HB_ITEM_MANUFACTURER, default=manufacturer
+                ): str,
+                vol.Optional(CONF_HB_ITEM_MODEL_NUMBER, default=model_number): str,
+                vol.Optional(CONF_HB_ITEM_SERIAL_NUMBER, default=serial_number): str,
+                vol.Optional(
+                    CONF_HB_ITEM_DESCRIPTION,
+                    default=f"Created from Home Assistant device: {device_name}",
+                ): str,
+                vol.Required(
+                    CONF_HB_ITEM_PURCHASE_PRICE,
+                    default=0.0,
+                ): vol.All(vol.Coerce(float), vol.Range(min=0)),
+                vol.Optional(CONF_HB_ITEM_IMAGE_URL): str,
+            }
+        )
+
+        return self.async_show_form(
+            step_id="create_hb_item_details",
+            data_schema=data_schema,
+            errors=errors,
+            description_placeholders={
+                "device_name": device_name,
+                "location_name": area_name or "No area assigned in Home Assistant",
+            },
         )
 
     async def async_step_link_ha_device(
@@ -212,6 +409,9 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
                     )
                 }
             ),
+            description_placeholders={
+                "unlinked_count": str(len(unlinked_hb_items)),
+            },
         )
 
     async def async_step_choose_ha_device(
@@ -221,9 +421,7 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
         if self._selected_hb_item_id is None:
             return self.async_abort(reason="missing_hb_item")
 
-        device_registry = dr.async_get(self.hass)
-        ha_device_to_hb_item, _ = get_link_maps(self.config_entry)
-        linked_ha_device_ids = set(ha_device_to_hb_item)
+        available_devices = _get_unlinked_named_ha_devices(self.hass, self.config_entry)
         hb_item_name = self._selected_hb_item_name or ""
         ranked_devices = sorted(
             (
@@ -231,9 +429,7 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
                     _name_similarity(hb_item_name, device.name_by_user or device.name),
                     device,
                 )
-                for device in device_registry.devices.values()
-                if (device.name_by_user or device.name)
-                and device.id not in linked_ha_device_ids
+                for device in available_devices
             ),
             key=lambda result: result[0],
             reverse=True,
@@ -293,30 +489,43 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Select and remove existing link."""
-        link_rows = list_link_rows(self.config_entry)
-        if not link_rows:
+        ha_device_to_hb_item, _ = get_link_maps(self.config_entry)
+        if not ha_device_to_hb_item:
             return self.async_abort(reason="no_links")
 
-        coordinator = self.config_entry.runtime_data
         device_registry = dr.async_get(self.hass)
-        hb_item_names = await _async_get_hb_item_names(
-            coordinator.api, [row[CONF_HB_ITEM_ID] for row in link_rows]
-        )
-        options = [
+        device_options = [
             selector.SelectOptionDict(
-                value=f"{row[CONF_HA_DEVICE_ID]}|{row[CONF_HB_ITEM_ID]}",
-                label=(
-                    f"{_ha_device_label(device_registry, row[CONF_HA_DEVICE_ID])}"
-                    f" -> {_hb_item_label(row[CONF_HB_ITEM_ID], hb_item_names)}"
-                ),
+                value=ha_device_id,
+                label=_ha_device_label(device_registry, ha_device_id),
             )
-            for row in link_rows
+            for ha_device_id in sorted(
+                ha_device_to_hb_item,
+                key=lambda device_id: _ha_device_label(device_registry, device_id).lower(),
+            )
         ]
 
         errors: dict[str, str] = {}
         if user_input is not None:
-            selected = user_input[CONF_LINK_ACTION]
-            selected_ha_device_id, selected_hb_item_id = selected.split("|", 1)
+            selected_ha_device_id = user_input[CONF_HA_DEVICE_ID]
+            selected_hb_item_id = ha_device_to_hb_item.get(selected_ha_device_id)
+            if selected_hb_item_id is None:
+                errors["base"] = "unlink_conflict"
+                return self.async_show_form(
+                    step_id="unlink_ha_device",
+                    data_schema=vol.Schema(
+                        {
+                            vol.Required(CONF_HA_DEVICE_ID): selector.SelectSelector(
+                                selector.SelectSelectorConfig(
+                                    options=device_options, mode="dropdown"
+                                )
+                            )
+                        }
+                    ),
+                    errors=errors,
+                )
+
+            coordinator = self.config_entry.runtime_data
             try:
                 new_options = await remove_link(
                     self.hass,
@@ -336,8 +545,8 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
             step_id="unlink_ha_device",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_LINK_ACTION): selector.SelectSelector(
-                        selector.SelectSelectorConfig(options=options, mode="dropdown")
+                    vol.Required(CONF_HA_DEVICE_ID): selector.SelectSelector(
+                        selector.SelectSelectorConfig(options=device_options, mode="dropdown")
                     )
                 }
             ),
@@ -413,3 +622,42 @@ def _normalize_name(value: str | None) -> str:
         return ""
     normalized = re.sub(r"[^a-z0-9]+", " ", value.lower())
     return " ".join(normalized.split())
+
+
+def _get_ha_device_area_name(
+    hass: HomeAssistant, ha_device: dr.DeviceEntry
+) -> str | None:
+    """Return area name for a Home Assistant device."""
+    if not ha_device.area_id:
+        return None
+    area_registry = ar.async_get(hass)
+    if area := area_registry.async_get_area(ha_device.area_id):
+        return area.name
+    return None
+
+
+def _format_ha_model_number(ha_device: dr.DeviceEntry) -> str:
+    """Build a model number string from HA device model + model_id."""
+    model = (ha_device.model or "").strip()
+    model_id = (ha_device.model_id or "").strip()
+    if model and model_id:
+        if model_id in model:
+            return model
+        return f"{model} ({model_id})"
+    return model or model_id
+
+
+def _get_unlinked_named_ha_devices(
+    hass: HomeAssistant, config_entry: ConfigEntry
+) -> list[dr.DeviceEntry]:
+    """Return HA devices with names that are not linked to HomeBox items."""
+    device_registry = dr.async_get(hass)
+    ha_device_to_hb_item, _ = get_link_maps(config_entry)
+    linked_ha_device_ids = set(ha_device_to_hb_item)
+    return [
+        device
+        for device in device_registry.devices.values()
+        if (device.name_by_user or device.name)
+        and device.id not in linked_ha_device_ids
+        and not any(identifier[0] == DOMAIN for identifier in device.identifiers)
+    ]
