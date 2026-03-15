@@ -40,6 +40,7 @@ from .const import (
 from .linking import (
     apply_link,
     async_cleanup_unlinked_hb_backlinks,
+    get_link_maps,
     list_link_rows,
     remove_link,
 )
@@ -221,6 +222,8 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
             return self.async_abort(reason="missing_hb_item")
 
         device_registry = dr.async_get(self.hass)
+        ha_device_to_hb_item, _ = get_link_maps(self.config_entry)
+        linked_ha_device_ids = set(ha_device_to_hb_item)
         hb_item_name = self._selected_hb_item_name or ""
         ranked_devices = sorted(
             (
@@ -229,7 +232,8 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
                     device,
                 )
                 for device in device_registry.devices.values()
-                if device.name_by_user or device.name
+                if (device.name_by_user or device.name)
+                and device.id not in linked_ha_device_ids
             ),
             key=lambda result: result[0],
             reverse=True,

@@ -112,9 +112,13 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
 
         count = len(unlinked_hb_items)
         title = "HomeBox linking action needed"
+        integration_url = (
+            f"/config/integrations/integration/{self.config_entry.entry_id}"
+        )
         message = (
             f"Found {count} tagged HomeBox item(s) without HA device link.\n\n"
-            "Open the HomeBox integration options and run the linking wizard."
+            f"[Open HomeBox integration]({integration_url})\n\n"
+            "Then open `Configure` and run the linking wizard."
         )
         persistent_notification.async_create(
             self.hass,

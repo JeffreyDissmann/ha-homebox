@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Placeholder for upcoming changes.
 
+## [0.1.2] - 2026-03-15
+
+### Changed
+
+- Added a clickable link in the HomeBox linking notification to open the integration page directly.
+- Link wizard now hides Home Assistant devices that are already linked to a HomeBox item.
+
 ## [0.1.1] - 2026-03-15
 
 ### Changed
