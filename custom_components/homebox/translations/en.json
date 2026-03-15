@@ -9,7 +9,7 @@
         },
         "error": {
             "cannot_connect": "Failed to connect",
-            "invalid_auth_homebox": "Login failed. Verify the HomeBox URL and port (often :7745 or Docker-mapped :3100), and confirm the username/password are correct for HomeBox local login.",
+            "invalid_auth_homebox": "Login failed. Verify the HomeBox URL and port (often :7745 or Docker-mapped :3100), and confirm the email address/password are correct for HomeBox local login.",
             "link_conflict": "Cannot create link because this Home Assistant device or HomeBox item is already linked.",
             "unlink_conflict": "Cannot remove link because the selected mapping no longer matches.",
             "unknown": "Unexpected error"
@@ -21,7 +21,7 @@
                     "host": "Host",
                     "name": "Name",
                     "password": "Password",
-                    "username": "Username"
+                    "username": "Email address"
                 },
                 "description": "If login fails, HomeBox returned: {auth_error_detail}",
                 "data_description": {
@@ -29,7 +29,7 @@
                     "host": "URL or hostname of your HomeBox instance. Common ports are 7745 (default) or 3100 (common Docker mapping), for example: http://homebox.local:3100",
                     "name": "Device name shown in Home Assistant (default: HomeBox)",
                     "password": "Password of your HomeBox account",
-                    "username": "Username or email of your HomeBox account"
+                    "username": "Email address of your HomeBox account"
                 }
             }
         }
