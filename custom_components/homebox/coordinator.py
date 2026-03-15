@@ -112,9 +112,7 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
 
         count = len(unlinked_hb_items)
         title = "HomeBox linking action needed"
-        integration_url = (
-            f"/config/integrations/integration/{self.config_entry.entry_id}"
-        )
+        integration_url = f"/config/integrations/integration/{DOMAIN}"
         message = (
             f"Found {count} tagged HomeBox item(s) without HA device link.\n\n"
             f"[Open HomeBox integration]({integration_url})\n\n"
