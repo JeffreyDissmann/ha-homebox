@@ -2,7 +2,7 @@
   "name": "HomeBox",
   "content_in_root": false,
   "render_readme": true,
-  "domains": ["sensor"],
+  "domains": ["homebox"],
   "homeassistant": "2024.1.0",
   "iot_class": "local_polling"
 }

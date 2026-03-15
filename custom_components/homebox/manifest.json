@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "codeowners": ["@JeffreyDissmann"],
   "config_flow": true,
-  "documentation": "https://www.home-assistant.io/integrations/homebox",
+  "documentation": "https://github.com/JeffreyDissmann/ha-homebox#readme",
+  "issue_tracker": "https://github.com/JeffreyDissmann/ha-homebox/issues",
+  "integration_type": "hub",
   "iot_class": "local_polling",
   "requirements": []
 }
