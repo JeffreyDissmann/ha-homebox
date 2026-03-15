@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-03-15
+
+### Added
+
+- New options workflow to create and link a HomeBox item directly from an unlinked Home Assistant device.
+- Prefilled item details from Home Assistant (name, manufacturer, model, serial number, and area-based location).
+- Optional image URL import during item creation with upload support to HomeBox.
+
+### Changed
+
+- Linking and unlinking options now use clearer labels and improved selection behavior.
+- Unlink flow now selects from linked Home Assistant devices only.
+- User-facing config/options wording was polished for consistency and clarity.
+
+### Fixed
+
+- Added rollback cleanup when create-and-link fails after item creation.
+- Image upload failures no longer abort item creation/linking and now surface as warnings.
+
 ## [0.1.3] - 2026-03-15
 
 ### Fixed
