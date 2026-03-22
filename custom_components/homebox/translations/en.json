@@ -1,6 +1,6 @@
 {
     "config": {
-        "flow_title": "{hb_item_name}",
+        "flow_title": "{name}",
         "abort": {
             "already_configured": "Service is already configured",
             "already_linked": "This HomeBox item is already linked.",
@@ -67,7 +67,6 @@
             "init": {
                 "menu_options": {
                     "create_hb_item_from_ha_device": "Create and link HomeBox item from Home Assistant device",
-                    "link_ha_device": "Link existing HomeBox item to Home Assistant device",
                     "unlink_ha_device": "Unlink Home Assistant device and HomeBox item",
                     "resync": "Refresh tagged HomeBox items and clean up links"
                 }
@@ -89,19 +88,6 @@
                     "hb_item_name": "Name",
                     "hb_item_purchase_price": "Value / purchase price",
                     "hb_item_serial_number": "Serial number"
-                }
-            },
-            "link_ha_device": {
-                "title": "Select existing HomeBox item",
-                "description": "{unlinked_count} unlinked tagged HomeBox item(s) available.",
-                "data": {
-                    "hb_item_id": "Unlinked HomeBox item"
-                }
-            },
-            "choose_ha_device": {
-                "title": "Select Home Assistant device to link",
-                "data": {
-                    "ha_device_id": "Unlinked Home Assistant device"
                 }
             },
             "unlink_ha_device": {

@@ -44,7 +44,6 @@ from .const import (
     CONF_AREA,
     CONF_HA_DEVICE_ID,
     CONF_HB_ITEM_DESCRIPTION,
-    CONF_HB_ITEM_ID,
     CONF_HB_ITEM_IMAGE_URL,
     CONF_HB_ITEM_MANUFACTURER,
     CONF_HB_ITEM_MODEL_NUMBER,
@@ -210,7 +209,11 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
         self._discovery_hb_item_details = _format_hb_item_metadata(hb_item_data)
         self._discovery_hb_item_manufacturer = _safe_str(hb_item_data.get("manufacturer"))
         self._discovery_hb_item_model = _safe_str(hb_item_data.get("modelNumber"))
-        self.context["title_placeholders"] = {"hb_item_name": hb_item_name}
+        self.context["title_placeholders"] = {
+            "name": hb_item_name,
+            "hb_item_name": hb_item_name,
+        }
+        self.async_update_title_placeholders({"name": hb_item_name})
 
         return await self.async_step_link_discovered_hb_item()
 
@@ -385,8 +388,6 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
         super().__init__(config_entry)
-        self._selected_hb_item_id: str | None = None
-        self._selected_hb_item_name: str | None = None
         self._selected_ha_device_id_for_create: str | None = None
 
     async def async_step_init(
@@ -397,7 +398,6 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
             step_id="init",
             menu_options=[
                 "create_hb_item_from_ha_device",
-                "link_ha_device",
                 "unlink_ha_device",
                 "resync",
             ],
@@ -595,123 +595,6 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
             },
         )
 
-    async def async_step_link_ha_device(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Select unlinked hb_item."""
-        coordinator = self.config_entry.runtime_data
-        await coordinator.async_refresh()
-        unlinked_hb_items = coordinator.data.unlinked_hb_items
-        if not unlinked_hb_items:
-            return self.async_abort(reason="no_unlinked_hb_items")
-
-        if user_input is not None:
-            self._selected_hb_item_id = user_input[CONF_HB_ITEM_ID]
-            selected_hb_item = next(
-                (
-                    hb_item
-                    for hb_item in unlinked_hb_items
-                    if hb_item.hb_item_id == self._selected_hb_item_id
-                ),
-                None,
-            )
-            self._selected_hb_item_name = (
-                selected_hb_item.name if selected_hb_item else None
-            )
-            return await self.async_step_choose_ha_device()
-
-        options = [
-            selector.SelectOptionDict(
-                value=hb_item.hb_item_id,
-                label=f"{hb_item.name} ({hb_item.hb_item_id})",
-            )
-            for hb_item in unlinked_hb_items
-        ]
-        return self.async_show_form(
-            step_id="link_ha_device",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_HB_ITEM_ID): selector.SelectSelector(
-                        selector.SelectSelectorConfig(options=options, mode="dropdown")
-                    )
-                }
-            ),
-            description_placeholders={
-                "unlinked_count": str(len(unlinked_hb_items)),
-            },
-        )
-
-    async def async_step_choose_ha_device(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Select ha_device for hb_item and apply link."""
-        if self._selected_hb_item_id is None:
-            return self.async_abort(reason="missing_hb_item")
-
-        available_devices = _get_unlinked_named_ha_devices(self.hass, self.config_entry)
-        hb_item_name = self._selected_hb_item_name or ""
-        ranked_devices = sorted(
-            (
-                (
-                    _name_similarity(hb_item_name, device.name_by_user or device.name),
-                    device,
-                )
-                for device in available_devices
-            ),
-            key=lambda result: result[0],
-            reverse=True,
-        )
-
-        ha_device_options = [
-            selector.SelectOptionDict(
-                value=device.id,
-                label=device.name_by_user or device.name or device.id,
-            )
-            for _, device in ranked_devices
-        ]
-        if not ha_device_options:
-            return self.async_abort(reason="no_ha_devices")
-
-        suggested_ha_device_id: str | None = None
-        if ranked_devices and ranked_devices[0][0] >= 0.65:
-            suggested_ha_device_id = ranked_devices[0][1].id
-
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            selected_ha_device_id = user_input[CONF_HA_DEVICE_ID]
-            coordinator = self.config_entry.runtime_data
-            try:
-                new_options = await apply_link(
-                    self.hass,
-                    self.config_entry,
-                    coordinator.api,
-                    selected_ha_device_id,
-                    self._selected_hb_item_id,
-                )
-            except ValueError:
-                errors["base"] = "link_conflict"
-            else:
-                self.options.clear()
-                self.options.update(new_options)
-                return self.async_create_entry(title="", data=self.options)
-
-        return self.async_show_form(
-            step_id="choose_ha_device",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_HA_DEVICE_ID,
-                        default=suggested_ha_device_id,
-                    ): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=ha_device_options, mode="dropdown"
-                        )
-                    )
-                }
-            ),
-            errors=errors,
-        )
-
     async def async_step_unlink_ha_device(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -800,30 +683,6 @@ def _ha_device_label(device_registry: dr.DeviceRegistry, ha_device_id: str) -> s
     if ha_device := device_registry.async_get(ha_device_id):
         return ha_device.name_by_user or ha_device.name or ha_device_id
     return ha_device_id
-
-
-def _hb_item_label(hb_item_id: str, hb_item_names: dict[str, str]) -> str:
-    """Return readable label for a HomeBox item ID."""
-    if hb_item_name := hb_item_names.get(hb_item_id):
-        return hb_item_name
-    short_id = hb_item_id[:8]
-    return f"HomeBox item ({short_id})"
-
-
-async def _async_get_hb_item_names(
-    api: HomeBoxApiClient, hb_item_ids: list[str]
-) -> dict[str, str]:
-    """Fetch HomeBox item names for display labels."""
-    names: dict[str, str] = {}
-    for hb_item_id in hb_item_ids:
-        try:
-            hb_item = await api.async_get_hb_item(hb_item_id)
-        except (HomeBoxApiError, HomeBoxAuthenticationError, HomeBoxConnectionError):
-            continue
-        hb_item_name = hb_item.get("name")
-        if isinstance(hb_item_name, str) and hb_item_name:
-            names[hb_item_id] = hb_item_name
-    return names
 
 
 def _name_similarity(left: str | None, right: str | None) -> float:
