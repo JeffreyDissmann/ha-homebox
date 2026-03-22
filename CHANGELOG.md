@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-22
+
+### Added
+
+- Added Integrations-page discovery prompts for tagged HomeBox items that still need linking, replacing the previous notification-only workflow.
+- Added a guided discovery-linking flow with top suggested Home Assistant devices and manual device selection fallback.
+
+### Changed
+
+- Discovery card title now shows the HomeBox item name directly.
+- Discovery linking step now includes richer context (item metadata and improved suggested device labels with manufacturer/model).
+- Matching suggestions now consistently show the top 3 candidates.
+
 ## [0.2.0] - 2026-03-15
 
 ### Added
