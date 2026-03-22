@@ -117,6 +117,12 @@
     },
     "entity": {
         "sensor": {
+            "estimated_battery_depletion_date": {
+                "name": "Geschätztes Batterieleer-Datum"
+            },
+            "linked_homebox_id": {
+                "name": "HomeBox-ID"
+            },
             "total_locations": {
                 "name": "Anzahl Standorte"
             },

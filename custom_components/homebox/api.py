@@ -613,6 +613,75 @@ class HomeBoxApiClient:
         payload["locationId"] = hb_location_id
         await self.async_update_hb_item(hb_item_id, payload)
 
+    async def async_get_hb_item_maintenance(
+        self, hb_item_id: str, *, status: str = "both"
+    ) -> list[dict[str, Any]]:
+        """Return maintenance entries for a HomeBox item."""
+        data = await self._async_request_json(
+            "GET",
+            f"v1/items/{hb_item_id}/maintenance",
+            auth_required=True,
+            error_context="item maintenance request",
+            params={"status": status},
+        )
+        if not isinstance(data, list):
+            raise HomeBoxApiError("HomeBox item maintenance response is not a list")
+        return [item for item in data if isinstance(item, dict)]
+
+    async def async_create_hb_item_maintenance(
+        self,
+        hb_item_id: str,
+        *,
+        name: str,
+        description: str,
+        scheduled_date: str,
+        cost: str = "0",
+    ) -> str:
+        """Create maintenance entry for a HomeBox item and return entry ID."""
+        data = await self._async_request_json(
+            "POST",
+            f"v1/items/{hb_item_id}/maintenance",
+            auth_required=True,
+            error_context="create item maintenance",
+            payload={
+                "name": name,
+                "description": description,
+                "scheduledDate": scheduled_date,
+                "cost": cost,
+            },
+        )
+        if not isinstance(data, dict):
+            raise HomeBoxApiError("HomeBox create maintenance response is invalid")
+        maintenance_id = data.get("id")
+        if not isinstance(maintenance_id, str) or not maintenance_id:
+            raise HomeBoxApiError("HomeBox create maintenance response missing ID")
+        return maintenance_id
+
+    async def async_update_hb_maintenance(
+        self,
+        maintenance_id: str,
+        *,
+        name: str,
+        description: str,
+        scheduled_date: str,
+        cost: str = "0",
+    ) -> None:
+        """Update a HomeBox maintenance entry."""
+        data = await self._async_request_json(
+            "PUT",
+            f"v1/maintenance/{maintenance_id}",
+            auth_required=True,
+            error_context="maintenance update",
+            payload={
+                "name": name,
+                "description": description,
+                "scheduledDate": scheduled_date,
+                "cost": cost,
+            },
+        )
+        if not isinstance(data, dict):
+            raise HomeBoxApiError("HomeBox maintenance update response is invalid")
+
     def get_hb_item_url(self, hb_item_id: str) -> str:
         """Build HomeBox web URL for a given item."""
         return f"{self._host.rstrip('/')}/item/{hb_item_id}"
