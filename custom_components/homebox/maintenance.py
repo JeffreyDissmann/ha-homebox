@@ -191,6 +191,21 @@ def _is_entry_completed(entry: dict[str, Any]) -> bool:
     return isinstance(completed_date, str) and bool(completed_date)
 
 
+def _is_entry_up_to_date(
+    entry: dict[str, Any],
+    *,
+    name: str,
+    description: str,
+    scheduled_date: str,
+) -> bool:
+    """Return True if maintenance entry already matches desired values."""
+    return (
+        entry.get("name") == name
+        and entry.get("description") == description
+        and entry.get("scheduledDate") == scheduled_date
+    )
+
+
 async def async_sync_battery_maintenance_items(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -258,12 +273,18 @@ async def async_sync_battery_maintenance_items(
         )
 
         if tracked_entry is not None and not _is_entry_completed(tracked_entry):
-            await api.async_update_hb_maintenance(
-                tracked_maintenance_id,
+            if not _is_entry_up_to_date(
+                tracked_entry,
                 name=name,
                 description=description,
                 scheduled_date=scheduled_date_str,
-            )
+            ):
+                await api.async_update_hb_maintenance(
+                    tracked_maintenance_id,
+                    name=name,
+                    description=description,
+                    scheduled_date=scheduled_date_str,
+                )
             if updated_map.get(ha_device_id) != {
                 "hb_item_id": forecast.hb_item_id,
                 "hb_maintenance_id": tracked_maintenance_id,

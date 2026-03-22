@@ -103,22 +103,15 @@ async def async_setup_entry(
                     linked_ha_device,
                 )
             )
-            linked_battery_forecast = entry.runtime_data.data.linked_battery_forecasts.get(
-                ha_device_id
-            )
-            if (
-                linked_battery_forecast is not None
-                and linked_battery_forecast.battery_entity_id is not None
-            ):
-                entities.append(
-                    HomeBoxLinkedBatteryDepletionDateSensor(
-                        entry.runtime_data,
-                        entry.entry_id,
-                        ha_device_id,
-                        linked_ha_device,
-                    )
+            entities.append(
+                HomeBoxLinkedBatteryDepletionDateSensor(
+                    entry.runtime_data,
+                    entry.entry_id,
+                    ha_device_id,
+                    linked_ha_device,
                 )
-                forecast_entities_added += 1
+            )
+            forecast_entities_added += 1
 
     _LOGGER.debug(
         "HomeBox sensor setup: added %s entities total, including %s battery depletion sensors",
