@@ -21,7 +21,6 @@ CONF_HB_ITEM_PURCHASE_PRICE = "hb_item_purchase_price"
 
 LINK_TAG_NAME = "HomeAssistant"
 LINK_BACKLINK_FIELD_NAME = "Home Assistant Device URL"
-LINKING_NOTIFICATION_ID = "homebox_linking_unlinked_items"
 
 API_BASE_PATH = "/api"
 DEFAULT_POLL_INTERVAL = timedelta(minutes=5)

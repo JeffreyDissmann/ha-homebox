@@ -12,6 +12,7 @@ from yarl import URL
 
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import (
+    SOURCE_INTEGRATION_DISCOVERY,
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
@@ -20,7 +21,12 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import area_registry as ar, device_registry as dr, selector
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    selector,
+    translation as ha_translation,
+)
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import (
@@ -56,6 +62,8 @@ from .linking import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_MANUAL_HA_DEVICE_SELECTION = "__manual__"
+_MAX_SUGGESTED_HA_DEVICES = 3
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -94,6 +102,14 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
     _auth_error_detail: str = "No authentication attempt yet."
+    _discovery_entry_id: str | None = None
+    _discovery_hb_item_id: str | None = None
+    _discovery_hb_item_name: str | None = None
+    _discovery_hb_item_details: str = ""
+    _discovery_hb_item_manufacturer: str | None = None
+    _discovery_hb_item_model: str | None = None
+    _discovery_suggested_ha_device_ids: list[str] = []
+    _config_translations: dict[str, str] | None = None
 
     @staticmethod
     def async_get_options_flow(config_entry: ConfigEntry) -> HomeBoxOptionsFlow:
@@ -138,6 +154,217 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
             description_placeholders={"auth_error_detail": self._auth_error_detail},
         )
+
+    async def async_step_integration_discovery(
+        self, discovery_info: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Handle integration discovery for unlinked tagged HomeBox items."""
+        if self.source != SOURCE_INTEGRATION_DISCOVERY:
+            return self.async_abort(reason="unknown")
+
+        entry_id = discovery_info.get("config_entry_id")
+        hb_item_id = discovery_info.get("hb_item_id")
+        hb_item_name = discovery_info.get("hb_item_name")
+        if not isinstance(entry_id, str) or not isinstance(hb_item_id, str):
+            return self.async_abort(reason="missing_config_entry")
+        if not isinstance(hb_item_name, str) or not hb_item_name:
+            hb_item_name = hb_item_id
+
+        entry = self.hass.config_entries.async_get_entry(entry_id)
+        if entry is None or entry.domain != DOMAIN:
+            return self.async_abort(reason="missing_config_entry")
+
+        await self.async_set_unique_id(f"{entry_id}:{hb_item_id}")
+        self._abort_if_unique_id_configured()
+
+        _, hb_item_to_ha_device = get_link_maps(entry)
+        if hb_item_id in hb_item_to_ha_device:
+            return self.async_abort(reason="already_linked")
+
+        if not getattr(entry, "runtime_data", None):
+            return self.async_abort(reason="missing_config_entry")
+
+        coordinator = entry.runtime_data
+        unlinked_hb_item_ids = {
+            tagged_item.hb_item_id for tagged_item in coordinator.data.unlinked_hb_items
+        }
+        if hb_item_id not in unlinked_hb_item_ids:
+            return self.async_abort(reason="hb_item_not_available")
+
+        hb_item_data: dict[str, Any] = {}
+        try:
+            hb_item_data = await coordinator.api.async_get_hb_item(hb_item_id)
+        except (
+            HomeBoxApiError,
+            HomeBoxAuthenticationError,
+            HomeBoxConnectionError,
+        ):
+            hb_item_data = {}
+        discovered_name = hb_item_data.get("name")
+        if isinstance(discovered_name, str) and discovered_name:
+            hb_item_name = discovered_name
+
+        self._discovery_entry_id = entry_id
+        self._discovery_hb_item_id = hb_item_id
+        self._discovery_hb_item_name = hb_item_name
+        self._discovery_hb_item_details = _format_hb_item_metadata(hb_item_data)
+        self._discovery_hb_item_manufacturer = _safe_str(hb_item_data.get("manufacturer"))
+        self._discovery_hb_item_model = _safe_str(hb_item_data.get("modelNumber"))
+        self.context["title_placeholders"] = {"hb_item_name": hb_item_name}
+
+        return await self.async_step_link_discovered_hb_item()
+
+    async def async_step_link_discovered_hb_item(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Link a discovered HomeBox item to an unlinked Home Assistant device."""
+        if self._discovery_entry_id is None or self._discovery_hb_item_id is None:
+            return self.async_abort(reason="missing_hb_item")
+
+        entry = self.hass.config_entries.async_get_entry(self._discovery_entry_id)
+        if entry is None or entry.domain != DOMAIN or not getattr(entry, "runtime_data", None):
+            return self.async_abort(reason="missing_config_entry")
+
+        available_devices = _get_unlinked_named_ha_devices(self.hass, entry)
+        if not available_devices:
+            return self.async_abort(reason="no_unlinked_ha_devices")
+
+        ranked_devices = _rank_ha_device_candidates(
+            self._discovery_hb_item_name,
+            available_devices,
+            self._discovery_hb_item_manufacturer,
+            self._discovery_hb_item_model,
+        )
+        suggested_pairs = ranked_devices[: min(_MAX_SUGGESTED_HA_DEVICES, len(ranked_devices))]
+        suggested_devices = [device for _, device in suggested_pairs]
+        self._discovery_suggested_ha_device_ids = [device.id for device in suggested_devices]
+
+        options = [
+            selector.SelectOptionDict(
+                value=device.id,
+                label=_ha_device_candidate_label(device),
+            )
+            for device in suggested_devices
+        ]
+        manual_option_label = await self._async_get_config_translation(
+            "step.link_discovered_hb_item.data.manual_option",
+            "Select manually",
+        )
+        options.append(
+            selector.SelectOptionDict(
+                value=_MANUAL_HA_DEVICE_SELECTION,
+                label=manual_option_label,
+            )
+        )
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            selected_ha_device_id = user_input[CONF_HA_DEVICE_ID]
+            if selected_ha_device_id == _MANUAL_HA_DEVICE_SELECTION:
+                return await self.async_step_select_discovered_manual_ha_device()
+            if (
+                selected_ha_device_id not in self._discovery_suggested_ha_device_ids
+                or not await self._async_apply_discovery_link(entry, selected_ha_device_id)
+            ):
+                errors["base"] = "link_conflict"
+            else:
+                return self.async_abort(reason="link_created")
+
+        return self.async_show_form(
+            step_id="link_discovered_hb_item",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HA_DEVICE_ID): selector.SelectSelector(
+                        selector.SelectSelectorConfig(options=options, mode="dropdown")
+                    )
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "hb_item_name": self._discovery_hb_item_name or self._discovery_hb_item_id,
+                "hb_item_details": self._discovery_hb_item_details
+                or await self._async_get_config_translation(
+                    "step.link_discovered_hb_item.data.no_item_details",
+                    "No additional HomeBox item details available.",
+                ),
+                "suggested_count": str(len(suggested_devices)),
+            },
+        )
+
+    async def async_step_select_discovered_manual_ha_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manually select any unlinked Home Assistant device for discovered item."""
+        if self._discovery_entry_id is None or self._discovery_hb_item_id is None:
+            return self.async_abort(reason="missing_hb_item")
+
+        entry = self.hass.config_entries.async_get_entry(self._discovery_entry_id)
+        if entry is None or entry.domain != DOMAIN or not getattr(entry, "runtime_data", None):
+            return self.async_abort(reason="missing_config_entry")
+
+        available_device_ids = {
+            device.id for device in _get_unlinked_named_ha_devices(self.hass, entry)
+        }
+        if not available_device_ids:
+            return self.async_abort(reason="no_unlinked_ha_devices")
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            selected_ha_device_id = user_input[CONF_HA_DEVICE_ID]
+            if (
+                selected_ha_device_id not in available_device_ids
+                or not await self._async_apply_discovery_link(entry, selected_ha_device_id)
+            ):
+                errors["base"] = "link_conflict"
+            else:
+                return self.async_abort(reason="link_created")
+
+        return self.async_show_form(
+            step_id="select_discovered_manual_ha_device",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HA_DEVICE_ID): selector.DeviceSelector(
+                        selector.DeviceSelectorConfig()
+                    )
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "hb_item_name": self._discovery_hb_item_name or self._discovery_hb_item_id,
+            },
+        )
+
+    async def _async_apply_discovery_link(
+        self, entry: ConfigEntry, ha_device_id: str
+    ) -> bool:
+        """Apply discovered link and refresh coordinator state."""
+        coordinator = entry.runtime_data
+        try:
+            new_options = await apply_link(
+                self.hass,
+                entry,
+                coordinator.api,
+                ha_device_id,
+                self._discovery_hb_item_id,
+            )
+        except ValueError:
+            return False
+
+        self.hass.config_entries.async_update_entry(entry, options=new_options)
+        await coordinator.async_refresh()
+        return True
+
+    async def _async_get_config_translation(self, key: str, default: str) -> str:
+        """Return a localized config translation string by relative key."""
+        if self._config_translations is None:
+            self._config_translations = await ha_translation.async_get_translations(
+                self.hass,
+                self.hass.config.language,
+                "config",
+                integrations=[DOMAIN],
+            )
+        full_key = f"component.{DOMAIN}.config.{key}"
+        return self._config_translations.get(full_key, default)
 
 
 class CannotConnect(HomeAssistantError):
@@ -614,6 +841,62 @@ def _name_similarity(left: str | None, right: str | None) -> float:
 
     overlap = len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
     return max(ratio, overlap)
+
+
+def _rank_ha_device_candidates(
+    hb_item_name: str | None,
+    devices: list[dr.DeviceEntry],
+    hb_manufacturer: str | None,
+    hb_model: str | None,
+) -> list[tuple[float, dr.DeviceEntry]]:
+    """Rank Home Assistant device candidates for a HomeBox item."""
+    def _score(device: dr.DeviceEntry) -> float:
+        device_name = device.name_by_user or device.name or ""
+        score = _name_similarity(hb_item_name, device_name) * 1.8
+        if hb_manufacturer and device.manufacturer:
+            score += _name_similarity(hb_manufacturer, device.manufacturer) * 0.8
+        if hb_model and device.model:
+            score += _name_similarity(hb_model, device.model) * 0.8
+        return score
+
+    return sorted(
+        ((_score(device), device) for device in devices),
+        key=lambda result: result[0],
+        reverse=True,
+    )
+
+
+def _format_hb_item_metadata(hb_item: dict[str, Any]) -> str:
+    """Build optional HomeBox item metadata lines for discovery UI."""
+    fields: list[tuple[str, str | None]] = [
+        ("Description", _safe_str(hb_item.get("description"))),
+        ("Manufacturer", _safe_str(hb_item.get("manufacturer"))),
+        ("Model", _safe_str(hb_item.get("modelNumber"))),
+        ("Serial number", _safe_str(hb_item.get("serialNumber"))),
+    ]
+    lines = [f"{label}: {value}" for label, value in fields if value]
+    return "\n".join(lines)
+
+
+def _ha_device_candidate_label(device: dr.DeviceEntry) -> str:
+    """Build a concise Home Assistant device label with context."""
+    base_name = device.name_by_user or device.name or device.id
+    details = [
+        part
+        for part in (device.manufacturer, _safe_str(device.model))
+        if part
+    ]
+    if not details:
+        return base_name
+    return f"{base_name} • {' • '.join(details)}"
+
+
+def _safe_str(value: Any) -> str | None:
+    """Return a stripped string value or None."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
 
 
 def _normalize_name(value: str | None) -> str:

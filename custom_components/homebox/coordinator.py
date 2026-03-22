@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 
-from homeassistant.components import persistent_notification
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY, ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import discovery_flow
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
@@ -17,7 +17,7 @@ from .api import (
     HomeBoxAuthenticationError,
     HomeBoxConnectionError,
 )
-from .const import DEFAULT_POLL_INTERVAL, DOMAIN, LINKING_NOTIFICATION_ID
+from .const import DEFAULT_POLL_INTERVAL, DOMAIN
 from .linking import (
     HomeBoxTaggedItem,
     async_sync_ha_areas_to_hb_locations,
@@ -83,7 +83,7 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
         await self._async_sync_ha_areas()
         group_stats: HomeBoxGroupStatistics = await self.api.async_get_group_statistics()
         link_scan = await scan_tagged_items_for_links(self.api, self.config_entry)
-        await self._async_update_linking_notification(link_scan.unlinked_hb_items)
+        self._async_create_linking_discovery_flows(link_scan.unlinked_hb_items)
         return HomeBoxStatistics(
             total_items=group_stats.total_items,
             total_locations=group_stats.total_locations,
@@ -101,26 +101,18 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
                 "Unable to sync Home Assistant areas to HomeBox locations during refresh"
             )
 
-    async def _async_update_linking_notification(
+    def _async_create_linking_discovery_flows(
         self, unlinked_hb_items: list[HomeBoxTaggedItem]
     ) -> None:
-        """Create or dismiss persistent notification for unlinked HomeBox items."""
-        notification_id = f"{LINKING_NOTIFICATION_ID}_{self.config_entry.entry_id}"
-        if not unlinked_hb_items:
-            persistent_notification.async_dismiss(self.hass, notification_id)
-            return
-
-        count = len(unlinked_hb_items)
-        title = "HomeBox linking action needed"
-        integration_url = f"/config/integrations/integration/{DOMAIN}"
-        message = (
-            f"Found {count} tagged HomeBox item(s) without HA device link.\n\n"
-            f"[Open HomeBox integration]({integration_url})\n\n"
-            "Then open `Configure` and run the linking wizard."
-        )
-        persistent_notification.async_create(
-            self.hass,
-            message,
-            title=title,
-            notification_id=notification_id,
-        )
+        """Create integration-discovery prompts for unlinked HomeBox items."""
+        for hb_item in unlinked_hb_items:
+            discovery_flow.async_create_flow(
+                self.hass,
+                DOMAIN,
+                context={"source": SOURCE_INTEGRATION_DISCOVERY},
+                data={
+                    "config_entry_id": self.config_entry.entry_id,
+                    "hb_item_id": hb_item.hb_item_id,
+                    "hb_item_name": hb_item.name,
+                },
+            )

@@ -1,7 +1,12 @@
 {
     "config": {
+        "flow_title": "{hb_item_name}",
         "abort": {
             "already_configured": "Service is already configured",
+            "already_linked": "This HomeBox item is already linked.",
+            "hb_item_not_available": "This HomeBox item is no longer available for linking.",
+            "link_created": "Link created.",
+            "missing_config_entry": "HomeBox integration is not loaded.",
             "missing_ha_device": "No Home Assistant device selected.",
             "missing_hb_item": "No HomeBox item selected.",
             "no_ha_devices": "No Home Assistant devices available for linking.",
@@ -37,6 +42,22 @@
                     "name": "Device name shown in Home Assistant (default: HomeBox)",
                     "password": "Password of your HomeBox account",
                     "username": "Email address of your HomeBox account"
+                }
+            },
+            "link_discovered_hb_item": {
+                "title": "Link discovered HomeBox item",
+                "description": "HomeBox item: {hb_item_name}\n\n{hb_item_details}\n\nShowing {suggested_count} suggested Home Assistant device match(es). Select \"Select manually\" to open the full device selector.",
+                "data": {
+                    "ha_device_id": "Suggested Home Assistant device",
+                    "manual_option": "Select manually",
+                    "no_item_details": "No additional HomeBox item details available."
+                }
+            },
+            "select_discovered_manual_ha_device": {
+                "title": "Select Home Assistant device manually",
+                "description": "Choose any unlinked Home Assistant device for HomeBox item: {hb_item_name}",
+                "data": {
+                    "ha_device_id": "Home Assistant device"
                 }
             }
         }
