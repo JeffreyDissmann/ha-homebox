@@ -16,7 +16,12 @@ from .api import (
     HomeBoxAuthenticationError,
     HomeBoxConnectionError,
 )
-from .const import CONF_HA_DEVICE_TO_HB_ITEM, CONF_HB_ITEM_TO_HA_DEVICE, CONF_LINKS
+from .const import (
+    CONF_BATTERY_MAINTENANCE,
+    CONF_HA_DEVICE_TO_HB_ITEM,
+    CONF_HB_ITEM_TO_HA_DEVICE,
+    CONF_LINKS,
+)
 from .coordinator import HomeBoxConfigEntry, HomeBoxDataUpdateCoordinator
 from .linking import (
     async_cleanup_removed_ha_device_link,
@@ -30,15 +35,21 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: HomeBoxConfigEntry) -> bool:
     """Set up HomeBox from a config entry."""
-    if CONF_LINKS not in entry.options:
+    if CONF_LINKS not in entry.options or CONF_BATTERY_MAINTENANCE not in entry.options:
         hass.config_entries.async_update_entry(
             entry,
             options={
                 **entry.options,
-                CONF_LINKS: {
-                    CONF_HA_DEVICE_TO_HB_ITEM: {},
-                    CONF_HB_ITEM_TO_HA_DEVICE: {},
-                },
+                CONF_LINKS: entry.options.get(
+                    CONF_LINKS,
+                    {
+                        CONF_HA_DEVICE_TO_HB_ITEM: {},
+                        CONF_HB_ITEM_TO_HA_DEVICE: {},
+                    },
+                ),
+                CONF_BATTERY_MAINTENANCE: entry.options.get(
+                    CONF_BATTERY_MAINTENANCE, {}
+                ),
             },
         )
 

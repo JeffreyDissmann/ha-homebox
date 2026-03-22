@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
+import logging
 from typing import Final
 
 from homeassistant.components.sensor import (
+    SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
@@ -21,6 +24,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import CONF_AREA, DEFAULT_NAME, DOMAIN
 from .coordinator import HomeBoxConfigEntry, HomeBoxDataUpdateCoordinator
 from .linking import get_link_maps
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -65,6 +70,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up HomeBox sensor entities from config entry."""
     entities: list[SensorEntity] = []
+    forecast_entities_added = 0
 
     suggested_area_name: str | None = None
     if area_id := entry.data.get(CONF_AREA):
@@ -97,7 +103,28 @@ async def async_setup_entry(
                     linked_ha_device,
                 )
             )
+            linked_battery_forecast = entry.runtime_data.data.linked_battery_forecasts.get(
+                ha_device_id
+            )
+            if (
+                linked_battery_forecast is not None
+                and linked_battery_forecast.battery_entity_id is not None
+            ):
+                entities.append(
+                    HomeBoxLinkedBatteryDepletionDateSensor(
+                        entry.runtime_data,
+                        entry.entry_id,
+                        ha_device_id,
+                        linked_ha_device,
+                    )
+                )
+                forecast_entities_added += 1
 
+    _LOGGER.debug(
+        "HomeBox sensor setup: added %s entities total, including %s battery depletion sensors",
+        len(entities),
+        forecast_entities_added,
+    )
     async_add_entities(entities)
 
 
@@ -149,7 +176,7 @@ class HomeBoxLinkedItemIdSensor(
     _attr_icon = "mdi:identifier"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_has_entity_name = True
-    _attr_name = "HomeBox ID"
+    _attr_translation_key = "linked_homebox_id"
 
     def __init__(
         self,
@@ -180,3 +207,69 @@ class HomeBoxLinkedItemIdSensor(
             "ha_device_id": self._ha_device_id,
             "homebox_id": self._hb_item_id,
         }
+
+
+class HomeBoxLinkedBatteryDepletionDateSensor(
+    CoordinatorEntity[HomeBoxDataUpdateCoordinator], SensorEntity
+):
+    """Date sensor with estimated battery depletion for one linked HA device."""
+
+    _attr_icon = "mdi:battery-clock"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_has_entity_name = True
+    _attr_translation_key = "estimated_battery_depletion_date"
+    _attr_device_class = SensorDeviceClass.DATE
+
+    def __init__(
+        self,
+        coordinator: HomeBoxDataUpdateCoordinator,
+        config_entry_id: str,
+        ha_device_id: str,
+        linked_ha_device: dr.DeviceEntry,
+    ) -> None:
+        """Initialize linked battery depletion date sensor."""
+        super().__init__(coordinator)
+        self._ha_device_id = ha_device_id
+        self._attr_unique_id = f"{config_entry_id}_{ha_device_id}_battery_depletion_date"
+        self._attr_native_value = self._resolve_native_value()
+
+        device_info: DeviceInfo = DeviceInfo()
+        if linked_ha_device.identifiers:
+            device_info["identifiers"] = set(linked_ha_device.identifiers)
+        if linked_ha_device.connections:
+            device_info["connections"] = set(linked_ha_device.connections)
+        self._attr_device_info = device_info
+
+    def _resolve_native_value(self) -> date | None:
+        """Return depletion date for linked device if available."""
+        forecast = self.coordinator.data.linked_battery_forecasts.get(self._ha_device_id)
+        if forecast is None or forecast.estimated_depletion_at is None:
+            return None
+        return forecast.estimated_depletion_at.date()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | float | None]:
+        """Return battery snapshots and trend data for this linked device."""
+        forecast = self.coordinator.data.linked_battery_forecasts.get(self._ha_device_id)
+        if forecast is None:
+            return {
+                "status": "no_data",
+                "ha_device_id": self._ha_device_id,
+            }
+        return {
+            "status": forecast.status,
+            "ha_device_id": forecast.ha_device_id,
+            "homebox_id": forecast.hb_item_id,
+            "battery_entity_id": forecast.battery_entity_id,
+            "battery_now": forecast.current,
+            "battery_1d_ago": forecast.day_ago,
+            "battery_7d_ago": forecast.week_ago,
+            "battery_30d_ago": forecast.month_ago,
+            "drain_rate_per_day": forecast.drain_rate_per_day,
+        }
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self._attr_native_value = self._resolve_native_value()
+        self.async_write_ha_state()

@@ -17,12 +17,17 @@ from .api import (
     HomeBoxAuthenticationError,
     HomeBoxConnectionError,
 )
+from .battery_forecast import (
+    LinkedBatteryForecast,
+    async_collect_linked_battery_forecasts,
+)
 from .const import DEFAULT_POLL_INTERVAL, DOMAIN
 from .linking import (
     HomeBoxTaggedItem,
     async_sync_ha_areas_to_hb_locations,
     scan_tagged_items_for_links,
 )
+from .maintenance import async_sync_battery_maintenance_items
 from .models import HomeBoxGroupStatistics
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,6 +44,7 @@ class HomeBoxStatistics:
     total_value: float
     unlinked_hb_items: list[HomeBoxTaggedItem]
     link_conflicts: list[str]
+    linked_battery_forecasts: dict[str, LinkedBatteryForecast]
 
 
 class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
@@ -83,6 +89,22 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
         await self._async_sync_ha_areas()
         group_stats: HomeBoxGroupStatistics = await self.api.async_get_group_statistics()
         link_scan = await scan_tagged_items_for_links(self.api, self.config_entry)
+        battery_forecasts = await async_collect_linked_battery_forecasts(
+            self.hass, self.config_entry
+        )
+        try:
+            new_options = await async_sync_battery_maintenance_items(
+                self.hass, self.config_entry, self.api, battery_forecasts
+            )
+        except Exception:  # pragma: no cover - best effort maintenance sync
+            _LOGGER.exception(
+                "Unable to sync Home Assistant maintenance items for battery forecasts"
+            )
+        else:
+            if new_options is not None:
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, options=new_options
+                )
         self._async_create_linking_discovery_flows(link_scan.unlinked_hb_items)
         return HomeBoxStatistics(
             total_items=group_stats.total_items,
@@ -90,6 +112,7 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
             total_value=group_stats.total_value,
             unlinked_hb_items=link_scan.unlinked_hb_items,
             link_conflicts=link_scan.conflicts,
+            linked_battery_forecasts=battery_forecasts,
         )
 
     async def _async_sync_ha_areas(self) -> None:
