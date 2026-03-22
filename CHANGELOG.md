@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-03-22
+
+### Changed
+
+- Streamlined linking options by removing legacy manual-link wizard steps and related dead code.
+- Adjusted coordinator polling interval to 1 hour.
+- Improved discovered-link card title handling to consistently display the HomeBox item name.
+
+### Added
+
+- Added German (`de`) translations for the HomeBox integration UI.
+
 ## [0.3.0] - 2026-03-22
 
 ### Added

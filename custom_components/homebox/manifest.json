@@ -1,7 +1,7 @@
 {
   "domain": "homebox",
   "name": "HomeBox",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "codeowners": ["@JeffreyDissmann"],
   "config_flow": true,
   "documentation": "https://github.com/JeffreyDissmann/ha-homebox#readme",
