@@ -197,12 +197,14 @@ def _is_entry_up_to_date(
     name: str,
     description: str,
     scheduled_date: str,
+    cost: str,
 ) -> bool:
     """Return True if maintenance entry already matches desired values."""
     return (
         entry.get("name") == name
         and entry.get("description") == description
         and entry.get("scheduledDate") == scheduled_date
+        and entry.get("cost") == cost
     )
 
 
@@ -247,9 +249,10 @@ async def async_sync_battery_maintenance_items(
             continue
 
         device_name = ha_device.name_by_user or ha_device.name
+        details = _extract_battery_notes_details(hass, ha_device_id)
         battery_notes_lines = _build_battery_notes_lines(
             language,
-            _extract_battery_notes_details(hass, ha_device_id),
+            details,
         )
         name = _build_maintenance_name(language, device_name)
         description = _build_maintenance_description(
@@ -258,6 +261,10 @@ async def async_sync_battery_maintenance_items(
         )
         scheduled_date: date = forecast.estimated_depletion_at.date()
         scheduled_date_str = scheduled_date.isoformat()
+        cost_int = details.quantity if details else None
+        if cost_int is None or cost_int < 1:
+            cost_int = 1
+        cost_str = str(cost_int)
 
         tracked = updated_map.get(ha_device_id)
         tracked_hb_item_id = tracked.get("hb_item_id") if tracked else None
@@ -278,12 +285,14 @@ async def async_sync_battery_maintenance_items(
                 name=name,
                 description=description,
                 scheduled_date=scheduled_date_str,
+                cost=cost_str,
             ):
                 await api.async_update_hb_maintenance(
                     tracked_maintenance_id,
                     name=name,
                     description=description,
                     scheduled_date=scheduled_date_str,
+                    cost=cost_str,
                 )
             if updated_map.get(ha_device_id) != {
                 "hb_item_id": forecast.hb_item_id,
@@ -301,6 +310,7 @@ async def async_sync_battery_maintenance_items(
             name=name,
             description=description,
             scheduled_date=scheduled_date_str,
+            cost=cost_str,
         )
         if updated_map.get(ha_device_id) != {
             "hb_item_id": forecast.hb_item_id,
