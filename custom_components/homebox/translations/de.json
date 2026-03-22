@@ -1,0 +1,131 @@
+{
+    "config": {
+        "flow_title": "{name}",
+        "abort": {
+            "already_configured": "Dienst ist bereits eingerichtet",
+            "already_linked": "Dieses HomeBox-Element ist bereits verknüpft.",
+            "hb_item_not_available": "Dieses HomeBox-Element steht für die Verknüpfung nicht mehr zur Verfügung.",
+            "link_created": "Verknüpfung erstellt.",
+            "missing_config_entry": "Die HomeBox-Integration ist nicht geladen.",
+            "missing_ha_device": "Kein Home Assistant-Gerät ausgewählt.",
+            "missing_hb_item": "Kein HomeBox-Element ausgewählt.",
+            "no_ha_devices": "Keine Home Assistant-Geräte für die Verknüpfung verfügbar.",
+            "no_links": "Noch keine Verknüpfungen konfiguriert.",
+            "no_unlinked_ha_devices": "Keine unverknüpften Home Assistant-Geräte verfügbar.",
+            "no_unlinked_hb_items": "Keine unverknüpften HomeBox-Elemente mit dem Tag Home Assistant gefunden."
+        },
+        "error": {
+            "cannot_connect": "Verbindung fehlgeschlagen",
+            "create_hb_item_failed": "HomeBox-Element konnte nicht erstellt und verknüpft werden. Protokolle prüfen und erneut versuchen.",
+            "image_download_failed": "Das Bild konnte nicht von der URL heruntergeladen werden.",
+            "image_not_image": "Die Bild-URL hat keinen Bild-Inhaltstyp zurückgegeben.",
+            "image_too_large": "Das Bild ist zu groß (maximal 10 MB).",
+            "invalid_auth_homebox": "Anmeldung fehlgeschlagen. Bitte HomeBox-URL und Port prüfen (häufig :7745 oder Docker-Mapping :3100) und sicherstellen, dass E-Mail-Adresse und Passwort für den lokalen HomeBox-Login korrekt sind.",
+            "invalid_image_url": "Die Bild-URL muss eine gültige http(s)-URL sein.",
+            "link_conflict": "Verknüpfung kann nicht erstellt werden, da dieses Home Assistant-Gerät oder HomeBox-Element bereits verknüpft ist.",
+            "unlink_conflict": "Verknüpfung kann nicht entfernt werden, da die ausgewählte Verknüpfung nicht mehr übereinstimmt.",
+            "unknown": "Unerwarteter Fehler"
+        },
+        "step": {
+            "user": {
+                "data": {
+                    "area": "Raum",
+                    "host": "Host",
+                    "name": "Name",
+                    "password": "Passwort",
+                    "username": "E-Mail-Adresse"
+                },
+                "description": "Wenn die Anmeldung fehlschlägt, hat HomeBox zurückgegeben: {auth_error_detail}",
+                "data_description": {
+                    "area": "Wähle einen vorhandenen Home Assistant-Raum als Vorschlag für das HomeBox-Gerät",
+                    "host": "URL oder Hostname deiner HomeBox-Instanz. Häufige Ports sind 7745 (Standard) oder 3100 (häufiges Docker-Mapping), zum Beispiel: http://homebox.local:3100",
+                    "name": "Gerätename in Home Assistant (Standard: HomeBox)",
+                    "password": "Passwort deines HomeBox-Kontos",
+                    "username": "E-Mail-Adresse deines HomeBox-Kontos"
+                }
+            },
+            "link_discovered_hb_item": {
+                "title": "Gefundenes HomeBox-Element verknüpfen",
+                "description": "HomeBox-Element: {hb_item_name}\n\n{hb_item_details}\n\nEs werden {suggested_count} vorgeschlagene Home Assistant-Geräte angezeigt. Wähle \"Manuell auswählen\", um den vollständigen Geräteauswahldialog zu öffnen.",
+                "data": {
+                    "ha_device_id": "Vorgeschlagenes Home Assistant-Gerät",
+                    "manual_option": "Manuell auswählen",
+                    "no_item_details": "Keine zusätzlichen Details zum HomeBox-Element verfügbar."
+                }
+            },
+            "select_discovered_manual_ha_device": {
+                "title": "Home Assistant-Gerät manuell auswählen",
+                "description": "Wähle ein unverknüpftes Home Assistant-Gerät für das HomeBox-Element: {hb_item_name}",
+                "data": {
+                    "ha_device_id": "Home Assistant-Gerät"
+                }
+            }
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "menu_options": {
+                    "create_hb_item_from_ha_device": "HomeBox-Element aus Home Assistant-Gerät erstellen und verknüpfen",
+                    "unlink_ha_device": "Verknüpfung zwischen Home Assistant-Gerät und HomeBox-Element aufheben",
+                    "resync": "Getaggte HomeBox-Elemente aktualisieren und Verknüpfungen bereinigen"
+                }
+            },
+            "create_hb_item_from_ha_device": {
+                "title": "Home Assistant-Gerät auswählen",
+                "data": {
+                    "ha_device_id": "Unverknüpftes Home Assistant-Gerät"
+                }
+            },
+            "create_hb_item_details": {
+                "title": "HomeBox-Element erstellen",
+                "description": "Gerät: {device_name}\n\nStandort aus Home Assistant-Bereich: {location_name}",
+                "data": {
+                    "hb_item_description": "Beschreibung",
+                    "hb_item_image_url": "Bild-URL (optional)",
+                    "hb_item_manufacturer": "Hersteller",
+                    "hb_item_model_number": "Modellnummer",
+                    "hb_item_name": "Name",
+                    "hb_item_purchase_price": "Wert / Kaufpreis",
+                    "hb_item_serial_number": "Seriennummer"
+                }
+            },
+            "unlink_ha_device": {
+                "title": "Zu entfernende Verknüpfung auswählen",
+                "data": {
+                    "ha_device_id": "Verknüpftes Home Assistant-Gerät"
+                }
+            }
+        },
+        "abort": {
+            "missing_ha_device": "Kein Home Assistant-Gerät ausgewählt.",
+            "missing_hb_item": "Kein HomeBox-Element ausgewählt.",
+            "no_ha_devices": "Keine Home Assistant-Geräte für die Verknüpfung verfügbar.",
+            "no_links": "Noch keine Verknüpfungen konfiguriert.",
+            "no_unlinked_ha_devices": "Keine unverknüpften Home Assistant-Geräte verfügbar.",
+            "no_unlinked_hb_items": "Keine unverknüpften HomeBox-Elemente mit dem Tag Home Assistant gefunden."
+        },
+        "error": {
+            "create_hb_item_failed": "HomeBox-Element konnte nicht erstellt und verknüpft werden. Protokolle prüfen und erneut versuchen.",
+            "image_download_failed": "Das Bild konnte nicht von der URL heruntergeladen werden.",
+            "image_not_image": "Die Bild-URL hat keinen Bild-Inhaltstyp zurückgegeben.",
+            "image_too_large": "Das Bild ist zu groß (maximal 10 MB).",
+            "invalid_image_url": "Die Bild-URL muss eine gültige http(s)-URL sein.",
+            "link_conflict": "Verknüpfung kann nicht erstellt werden, da dieses Home Assistant-Gerät oder HomeBox-Element bereits verknüpft ist.",
+            "unlink_conflict": "Verknüpfung kann nicht entfernt werden, da die ausgewählte Verknüpfung nicht mehr übereinstimmt."
+        }
+    },
+    "entity": {
+        "sensor": {
+            "total_locations": {
+                "name": "Anzahl Standorte"
+            },
+            "total_items": {
+                "name": "Anzahl Elemente"
+            },
+            "total_value": {
+                "name": "Gesamtwert"
+            }
+        }
+    }
+}
