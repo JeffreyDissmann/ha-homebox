@@ -78,9 +78,17 @@ def build_updated_options(
 def get_ha_device_url(hass: HomeAssistant, ha_device_id: str) -> str:
     """Build Home Assistant URL for a device page."""
     try:
-        base_url = get_url(hass)
+        base_url = get_url(
+            hass,
+            prefer_external=True,
+            allow_external=True,
+            allow_internal=False,
+        )
     except NoURLAvailableError:
-        return f"/config/devices/device/{ha_device_id}"
+        try:
+            base_url = get_url(hass)
+        except NoURLAvailableError:
+            return f"/config/devices/device/{ha_device_id}"
     return f"{base_url.rstrip('/')}/config/devices/device/{ha_device_id}"
 
 
