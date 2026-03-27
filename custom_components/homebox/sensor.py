@@ -15,7 +15,11 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import area_registry as ar, device_registry as dr
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -71,6 +75,7 @@ async def async_setup_entry(
     """Set up HomeBox sensor entities from config entry."""
     entities: list[SensorEntity] = []
     forecast_entities_added = 0
+    entity_registry = er.async_get(hass)
 
     suggested_area_name: str | None = None
     if area_id := entry.data.get(CONF_AREA):
@@ -103,15 +108,33 @@ async def async_setup_entry(
                     linked_ha_device,
                 )
             )
-            entities.append(
-                HomeBoxLinkedBatteryDepletionDateSensor(
-                    entry.runtime_data,
-                    entry.entry_id,
-                    ha_device_id,
-                    linked_ha_device,
-                )
+            linked_battery_forecast = entry.runtime_data.data.linked_battery_forecasts.get(
+                ha_device_id
             )
-            forecast_entities_added += 1
+            if (
+                linked_battery_forecast is not None
+                and linked_battery_forecast.battery_entity_id is not None
+            ):
+                entities.append(
+                    HomeBoxLinkedBatteryDepletionDateSensor(
+                        entry.runtime_data,
+                        entry.entry_id,
+                        ha_device_id,
+                        linked_ha_device,
+                    )
+                )
+                forecast_entities_added += 1
+            else:
+                stale_unique_id = (
+                    f"{entry.entry_id}_{ha_device_id}_battery_depletion_date"
+                )
+                stale_entity_id = entity_registry.async_get_entity_id(
+                    "sensor",
+                    DOMAIN,
+                    stale_unique_id,
+                )
+                if stale_entity_id is not None:
+                    entity_registry.async_remove(stale_entity_id)
 
     _LOGGER.debug(
         "HomeBox sensor setup: added %s entities total, including %s battery depletion sensors",
