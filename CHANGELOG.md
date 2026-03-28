@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-03-28
+
+### Added
+
+- Added integration subentry support so the Integrations page "Add" button can create and link a new HomeBox item from a Home Assistant device.
+- Added `missing_config_entry` abort translations for English and German.
+
+### Changed
+
+- Updated subentry action labels to "Create new HomeBox item" (EN) / "Neues HomeBox Element erstellen" (DE).
+- Improved HomeBox API error detail handling to include server-provided messages where available.
+
+### Fixed
+
+- Fixed create/link flow to always apply the HomeAssistant tag after item creation, including create fallback paths.
+- Fixed `InvalidAuth` initialization to call the base `HomeAssistantError` constructor.
+- Fixed options flow edge cases by guarding missing `runtime_data` instead of crashing.
+- Refactored duplicated create/link logic into shared helpers and restored stage-based error logging.
+
 ## [0.4.0] - 2026-03-22
 
 ### Added
