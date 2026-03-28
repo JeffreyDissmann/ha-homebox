@@ -111,6 +111,7 @@
             }
         },
         "abort": {
+            "missing_config_entry": "HomeBox integration is not loaded.",
             "missing_ha_device": "No Home Assistant device selected.",
             "missing_hb_item": "No HomeBox item selected.",
             "no_ha_devices": "No Home Assistant devices available for linking.",

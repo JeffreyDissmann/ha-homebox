@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 import logging
 import re
@@ -77,6 +78,28 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Optional(CONF_AREA): selector.AreaSelector(),
     }
 )
+
+
+@dataclass(slots=True, frozen=True)
+class _HomeBoxItemDraftDefaults:
+    """Default values for HomeBox item create form."""
+
+    device_name: str
+    manufacturer: str
+    model_number: str
+    serial_number: str
+    description: str
+    area_name: str | None
+
+
+@dataclass(slots=True, frozen=True)
+class _CreateAndLinkResult:
+    """Result of create-and-link operation."""
+
+    new_options: dict[str, Any] | None
+    hb_item_id: str | None
+    error: str | None
+    image_warning: str | None
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
@@ -459,153 +482,54 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
         if selected_ha_device_id is None:
             return self.async_abort(reason="missing_ha_device")
 
+        coordinator = getattr(self.config_entry, "runtime_data", None)
+        if coordinator is None:
+            return self.async_abort(reason="missing_config_entry")
+
         device_registry = dr.async_get(self.hass)
         ha_device = device_registry.async_get(selected_ha_device_id)
         if ha_device is None:
             return self.async_abort(reason="missing_ha_device")
 
-        device_name = ha_device.name_by_user or ha_device.name or ha_device.id
-        manufacturer = ha_device.manufacturer or ""
-        model_number = _format_ha_model_number(ha_device)
-        serial_number = ha_device.serial_number or ""
-        area_name = _get_ha_device_area_name(self.hass, ha_device)
+        defaults = _build_hb_item_draft_defaults(self.hass, ha_device)
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            purchase_price = float(user_input[CONF_HB_ITEM_PURCHASE_PRICE])
-            if purchase_price < 0:
-                errors["base"] = "create_hb_item_failed"
+            result = await _async_create_and_link_hb_item_from_ha_device(
+                self.hass,
+                self.config_entry,
+                selected_ha_device_id,
+                user_input,
+                image_failure_is_error=False,
+            )
+            if result.error is not None:
+                errors["base"] = result.error
             else:
-                coordinator = self.config_entry.runtime_data
-                api = coordinator.api
-                created_hb_item_id: str | None = None
-                image_warning: str | None = None
-                try:
-                    ha_device_to_hb_item, _ = get_link_maps(self.config_entry)
-                    if selected_ha_device_id in ha_device_to_hb_item:
-                        errors["base"] = "link_conflict"
-                    else:
-                        tag_id = await api.async_ensure_link_tag()
-                        location_id = (
-                            await api.async_ensure_location_by_name(area_name)
-                            if area_name
-                            else None
-                        )
-                        created_hb_item_id = await api.async_create_hb_item(
-                            name=user_input[CONF_HB_ITEM_NAME],
-                            location_id=location_id,
-                            tag_ids=[tag_id],
-                        )
-                        await api.async_update_hb_item_details(
-                            created_hb_item_id,
-                            name=user_input[CONF_HB_ITEM_NAME],
-                            description=user_input.get(CONF_HB_ITEM_DESCRIPTION, ""),
-                            manufacturer=user_input.get(CONF_HB_ITEM_MANUFACTURER, ""),
-                            model_number=user_input.get(CONF_HB_ITEM_MODEL_NUMBER, ""),
-                            serial_number=user_input.get(CONF_HB_ITEM_SERIAL_NUMBER, ""),
-                            purchase_price=purchase_price,
-                            location_id=location_id,
-                        )
-
-                        image_url = user_input.get(CONF_HB_ITEM_IMAGE_URL, "").strip()
-                        if image_url:
-                            try:
-                                await api.async_add_hb_item_photo_from_url(
-                                    created_hb_item_id, image_url
-                                )
-                            except HomeBoxInvalidImageUrlError:
-                                image_warning = "invalid_image_url"
-                            except HomeBoxImageContentTypeError:
-                                image_warning = "image_not_image"
-                            except HomeBoxImageTooLargeError:
-                                image_warning = "image_too_large"
-                            except HomeBoxImageDownloadError:
-                                image_warning = "image_download_failed"
-                            except (
-                                HomeBoxApiError,
-                                HomeBoxAuthenticationError,
-                                HomeBoxConnectionError,
-                            ):
-                                image_warning = "image_download_failed"
-
-                        # Apply standard link side effects and option persistence.
-                        new_options = await apply_link(
-                            self.hass,
-                            self.config_entry,
-                            api,
-                            selected_ha_device_id,
-                            created_hb_item_id,
-                        )
-                        if image_warning is not None:
-                            persistent_notification.async_create(
-                                self.hass,
-                                (
-                                    "HomeBox item was created and linked, but image upload "
-                                    f"failed ({image_warning}). You can add the image later "
-                                    "directly in HomeBox."
-                                ),
-                                title="HomeBox image upload warning",
-                                notification_id=(
-                                    f"{DOMAIN}_image_upload_warning_"
-                                    f"{self.config_entry.entry_id}"
-                                ),
-                            )
-                        self.options.clear()
-                        self.options.update(new_options)
-                        return self.async_create_entry(title="", data=self.options)
-                except ValueError:
-                    errors["base"] = "link_conflict"
-                except (
-                    HomeBoxApiError,
-                    HomeBoxAuthenticationError,
-                    HomeBoxConnectionError,
-                ):
-                    errors["base"] = "create_hb_item_failed"
-                finally:
-                    if (
-                        errors
-                        and created_hb_item_id is not None
-                        and errors.get("base") != "image_download_failed"
-                    ):
-                        try:
-                            await api.async_delete_hb_item(created_hb_item_id)
-                        except (
-                            HomeBoxApiError,
-                            HomeBoxAuthenticationError,
-                            HomeBoxConnectionError,
-                        ):
-                            _LOGGER.warning(
-                                "Unable to roll back HomeBox item %s after create/link failure",
-                                created_hb_item_id,
-                            )
-
-        data_schema = vol.Schema(
-            {
-                vol.Required(CONF_HB_ITEM_NAME, default=device_name): str,
-                vol.Optional(
-                    CONF_HB_ITEM_MANUFACTURER, default=manufacturer
-                ): str,
-                vol.Optional(CONF_HB_ITEM_MODEL_NUMBER, default=model_number): str,
-                vol.Optional(CONF_HB_ITEM_SERIAL_NUMBER, default=serial_number): str,
-                vol.Optional(
-                    CONF_HB_ITEM_DESCRIPTION,
-                    default=f"Created from Home Assistant device: {device_name}",
-                ): str,
-                vol.Required(
-                    CONF_HB_ITEM_PURCHASE_PRICE,
-                    default=0.0,
-                ): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                vol.Optional(CONF_HB_ITEM_IMAGE_URL): str,
-            }
-        )
+                assert result.new_options is not None
+                if result.image_warning is not None:
+                    persistent_notification.async_create(
+                        self.hass,
+                        (
+                            "HomeBox item was created and linked, but image upload "
+                            f"failed ({result.image_warning}). You can add the image later "
+                            "directly in HomeBox."
+                        ),
+                        title="HomeBox image upload warning",
+                        notification_id=(
+                            f"{DOMAIN}_image_upload_warning_{self.config_entry.entry_id}"
+                        ),
+                    )
+                self.options.clear()
+                self.options.update(result.new_options)
+                return self.async_create_entry(title="", data=self.options)
 
         return self.async_show_form(
             step_id="create_hb_item_details",
-            data_schema=data_schema,
+            data_schema=_build_hb_item_details_schema(defaults),
             errors=errors,
             description_placeholders={
-                "device_name": device_name,
-                "location_name": area_name or "No area assigned in Home Assistant",
+                "device_name": defaults.device_name,
+                "location_name": defaults.area_name or "No area assigned in Home Assistant",
             },
         )
 
@@ -613,6 +537,10 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Select and remove existing link."""
+        coordinator = getattr(self.config_entry, "runtime_data", None)
+        if coordinator is None:
+            return self.async_abort(reason="missing_config_entry")
+
         ha_device_to_hb_item, _ = get_link_maps(self.config_entry)
         if not ha_device_to_hb_item:
             return self.async_abort(reason="no_links")
@@ -649,7 +577,6 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
                     errors=errors,
                 )
 
-            coordinator = self.config_entry.runtime_data
             try:
                 new_options = await remove_link(
                     self.hass,
@@ -681,7 +608,10 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manually resync tagged hb_item scan."""
-        coordinator = self.config_entry.runtime_data
+        coordinator = getattr(self.config_entry, "runtime_data", None)
+        if coordinator is None:
+            return self.async_abort(reason="missing_config_entry")
+
         _, new_options = await async_cleanup_unlinked_hb_backlinks(
             self.hass, self.config_entry, coordinator.api
         )
@@ -767,143 +697,223 @@ class HomeBoxDeviceLinkSubentryFlow(ConfigSubentryFlow):
         if ha_device is None:
             return self.async_abort(reason="missing_ha_device")
 
-        device_name = ha_device.name_by_user or ha_device.name or ha_device.id
-        manufacturer = ha_device.manufacturer or ""
-        model_number = _format_ha_model_number(ha_device)
-        serial_number = ha_device.serial_number or ""
-        area_name = _get_ha_device_area_name(self.hass, ha_device)
+        defaults = _build_hb_item_draft_defaults(self.hass, ha_device)
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            purchase_price = float(user_input[CONF_HB_ITEM_PURCHASE_PRICE])
-            if purchase_price < 0:
-                errors["base"] = "create_hb_item_failed"
+            result = await _async_create_and_link_hb_item_from_ha_device(
+                self.hass,
+                config_entry,
+                selected_ha_device_id,
+                user_input,
+                image_failure_is_error=True,
+            )
+            if result.error is not None:
+                errors["base"] = result.error
             else:
-                api = coordinator.api
-                created_hb_item_id: str | None = None
-                try:
-                    ha_device_to_hb_item, _ = get_link_maps(config_entry)
-                    if selected_ha_device_id in ha_device_to_hb_item:
-                        errors["base"] = "link_conflict"
-                    else:
-                        tag_id = await api.async_ensure_link_tag()
-                        location_id = (
-                            await api.async_ensure_location_by_name(area_name)
-                            if area_name
-                            else None
-                        )
-                        created_hb_item_id = await api.async_create_hb_item(
-                            name=user_input[CONF_HB_ITEM_NAME],
-                            location_id=location_id,
-                            tag_ids=[tag_id],
-                        )
-                        await api.async_update_hb_item_details(
-                            created_hb_item_id,
-                            name=user_input[CONF_HB_ITEM_NAME],
-                            description=user_input.get(CONF_HB_ITEM_DESCRIPTION, ""),
-                            manufacturer=user_input.get(CONF_HB_ITEM_MANUFACTURER, ""),
-                            model_number=user_input.get(CONF_HB_ITEM_MODEL_NUMBER, ""),
-                            serial_number=user_input.get(CONF_HB_ITEM_SERIAL_NUMBER, ""),
-                            purchase_price=purchase_price,
-                            location_id=location_id,
-                        )
-                        await api.async_set_hb_item_tags(created_hb_item_id, [tag_id])
-
-                        image_url = user_input.get(CONF_HB_ITEM_IMAGE_URL, "").strip()
-                        if image_url:
-                            try:
-                                await api.async_add_hb_item_photo_from_url(
-                                    created_hb_item_id, image_url
-                                )
-                            except HomeBoxInvalidImageUrlError:
-                                errors["base"] = "invalid_image_url"
-                            except HomeBoxImageContentTypeError:
-                                errors["base"] = "image_not_image"
-                            except HomeBoxImageTooLargeError:
-                                errors["base"] = "image_too_large"
-                            except HomeBoxImageDownloadError:
-                                errors["base"] = "image_download_failed"
-                            except (
-                                HomeBoxApiError,
-                                HomeBoxAuthenticationError,
-                                HomeBoxConnectionError,
-                            ):
-                                errors["base"] = "image_download_failed"
-
-                        if errors:
-                            continue_flow = False
-                        else:
-                            continue_flow = True
-
-                        if continue_flow:
-                            new_options = await apply_link(
-                                self.hass,
-                                config_entry,
-                                api,
-                                selected_ha_device_id,
-                                created_hb_item_id,
-                            )
-                            self.hass.config_entries.async_update_entry(
-                                config_entry, options=new_options
-                            )
-                            await coordinator.async_refresh()
-                            return self.async_create_entry(
-                                title=user_input[CONF_HB_ITEM_NAME],
-                                data={
-                                    CONF_HA_DEVICE_ID: selected_ha_device_id,
-                                    CONF_HB_ITEM_ID: created_hb_item_id,
-                                },
-                                unique_id=f"{created_hb_item_id}:{selected_ha_device_id}",
-                            )
-                except ValueError:
-                    errors["base"] = "link_conflict"
-                except (
-                    HomeBoxApiError,
-                    HomeBoxAuthenticationError,
-                    HomeBoxConnectionError,
-                ):
-                    errors["base"] = "create_hb_item_failed"
-                finally:
-                    if errors and created_hb_item_id is not None:
-                        try:
-                            await api.async_delete_hb_item(created_hb_item_id)
-                        except (
-                            HomeBoxApiError,
-                            HomeBoxAuthenticationError,
-                            HomeBoxConnectionError,
-                        ):
-                            _LOGGER.warning(
-                                "Unable to roll back HomeBox item %s after create/link failure",
-                                created_hb_item_id,
-                            )
-
-        data_schema = vol.Schema(
-            {
-                vol.Required(CONF_HB_ITEM_NAME, default=device_name): str,
-                vol.Optional(CONF_HB_ITEM_MANUFACTURER, default=manufacturer): str,
-                vol.Optional(CONF_HB_ITEM_MODEL_NUMBER, default=model_number): str,
-                vol.Optional(CONF_HB_ITEM_SERIAL_NUMBER, default=serial_number): str,
-                vol.Optional(
-                    CONF_HB_ITEM_DESCRIPTION,
-                    default=f"Created from Home Assistant device: {device_name}",
-                ): str,
-                vol.Required(
-                    CONF_HB_ITEM_PURCHASE_PRICE,
-                    default=0.0,
-                ): vol.All(vol.Coerce(float), vol.Range(min=0)),
-                vol.Optional(CONF_HB_ITEM_IMAGE_URL): str,
-            }
-        )
+                assert result.new_options is not None
+                self.hass.config_entries.async_update_entry(
+                    config_entry, options=result.new_options
+                )
+                await coordinator.async_refresh()
+                assert result.hb_item_id is not None
+                return self.async_create_entry(
+                    title=user_input[CONF_HB_ITEM_NAME],
+                    data={
+                        CONF_HA_DEVICE_ID: selected_ha_device_id,
+                        CONF_HB_ITEM_ID: result.hb_item_id,
+                    },
+                    unique_id=f"{result.hb_item_id}:{selected_ha_device_id}",
+                )
 
         return self.async_show_form(
             step_id="create_hb_item_details",
-            data_schema=data_schema,
+            data_schema=_build_hb_item_details_schema(defaults),
             errors=errors,
             description_placeholders={
-                "device_name": device_name,
-                "location_name": area_name or "No area assigned in Home Assistant",
+                "device_name": defaults.device_name,
+                "location_name": defaults.area_name or "No area assigned in Home Assistant",
             },
         )
+
+
+def _build_hb_item_draft_defaults(
+    hass: HomeAssistant, ha_device: dr.DeviceEntry
+) -> _HomeBoxItemDraftDefaults:
+    """Build default values for create HomeBox item form."""
+    device_name = ha_device.name_by_user or ha_device.name or ha_device.id
+    return _HomeBoxItemDraftDefaults(
+        device_name=device_name,
+        manufacturer=ha_device.manufacturer or "",
+        model_number=_format_ha_model_number(ha_device),
+        serial_number=ha_device.serial_number or "",
+        description=f"Created from Home Assistant device: {device_name}",
+        area_name=_get_ha_device_area_name(hass, ha_device),
+    )
+
+
+def _build_hb_item_details_schema(defaults: _HomeBoxItemDraftDefaults) -> vol.Schema:
+    """Build shared schema for HomeBox item details form."""
+    return vol.Schema(
+        {
+            vol.Required(CONF_HB_ITEM_NAME, default=defaults.device_name): str,
+            vol.Optional(CONF_HB_ITEM_MANUFACTURER, default=defaults.manufacturer): str,
+            vol.Optional(CONF_HB_ITEM_MODEL_NUMBER, default=defaults.model_number): str,
+            vol.Optional(CONF_HB_ITEM_SERIAL_NUMBER, default=defaults.serial_number): str,
+            vol.Optional(
+                CONF_HB_ITEM_DESCRIPTION,
+                default=defaults.description,
+            ): str,
+            vol.Required(
+                CONF_HB_ITEM_PURCHASE_PRICE,
+                default=0.0,
+            ): vol.All(vol.Coerce(float), vol.Range(min=0)),
+            vol.Optional(CONF_HB_ITEM_IMAGE_URL): str,
+        }
+    )
+
+
+async def _async_upload_hb_item_image(
+    api: HomeBoxApiClient, hb_item_id: str, image_url: str
+) -> str | None:
+    """Upload optional item image and return warning/error code if upload fails."""
+    normalized_image_url = image_url.strip()
+    if not normalized_image_url:
+        return None
+    try:
+        await api.async_add_hb_item_photo_from_url(hb_item_id, normalized_image_url)
+    except HomeBoxInvalidImageUrlError:
+        return "invalid_image_url"
+    except HomeBoxImageContentTypeError:
+        return "image_not_image"
+    except HomeBoxImageTooLargeError:
+        return "image_too_large"
+    except (
+        HomeBoxImageDownloadError,
+        HomeBoxApiError,
+        HomeBoxAuthenticationError,
+        HomeBoxConnectionError,
+    ):
+        return "image_download_failed"
+    return None
+
+
+async def _async_create_and_link_hb_item_from_ha_device(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    ha_device_id: str,
+    user_input: dict[str, Any],
+    *,
+    image_failure_is_error: bool,
+) -> _CreateAndLinkResult:
+    """Create a HomeBox item from HA device details and link it."""
+    coordinator = getattr(config_entry, "runtime_data", None)
+    if coordinator is None:
+        return _CreateAndLinkResult(None, None, "missing_config_entry", None)
+
+    api = coordinator.api
+    device_registry = dr.async_get(hass)
+    ha_device = device_registry.async_get(ha_device_id)
+    if ha_device is None:
+        return _CreateAndLinkResult(None, None, "missing_ha_device", None)
+
+    purchase_price = float(user_input[CONF_HB_ITEM_PURCHASE_PRICE])
+    if purchase_price < 0:
+        return _CreateAndLinkResult(None, None, "create_hb_item_failed", None)
+
+    area_name = _get_ha_device_area_name(hass, ha_device)
+    created_hb_item_id: str | None = None
+    link_applied = False
+    stage = "init"
+    try:
+        stage = "validate_existing_link"
+        ha_device_to_hb_item, _ = get_link_maps(config_entry)
+        if ha_device_id in ha_device_to_hb_item:
+            return _CreateAndLinkResult(None, None, "link_conflict", None)
+
+        stage = "ensure_tag"
+        tag_id = await api.async_ensure_link_tag()
+        stage = "ensure_location"
+        location_id = (
+            await api.async_ensure_location_by_name(area_name) if area_name else None
+        )
+        stage = "create_item"
+        created_hb_item_id = await api.async_create_hb_item(
+            name=user_input[CONF_HB_ITEM_NAME],
+            location_id=location_id,
+            tag_ids=[tag_id],
+        )
+        stage = "update_item_details"
+        await api.async_update_hb_item_details(
+            created_hb_item_id,
+            name=user_input[CONF_HB_ITEM_NAME],
+            description=user_input.get(CONF_HB_ITEM_DESCRIPTION, ""),
+            manufacturer=user_input.get(CONF_HB_ITEM_MANUFACTURER, ""),
+            model_number=user_input.get(CONF_HB_ITEM_MODEL_NUMBER, ""),
+            serial_number=user_input.get(CONF_HB_ITEM_SERIAL_NUMBER, ""),
+            purchase_price=purchase_price,
+            location_id=location_id,
+        )
+        stage = "set_item_tags"
+        await api.async_set_hb_item_tags(created_hb_item_id, [tag_id])
+
+        stage = "upload_image"
+        image_warning = await _async_upload_hb_item_image(
+            api,
+            created_hb_item_id,
+            user_input.get(CONF_HB_ITEM_IMAGE_URL, ""),
+        )
+        if image_warning is not None and image_failure_is_error:
+            return _CreateAndLinkResult(None, None, image_warning, None)
+
+        stage = "apply_link"
+        new_options = await apply_link(
+            hass,
+            config_entry,
+            api,
+            ha_device_id,
+            created_hb_item_id,
+        )
+        link_applied = True
+        return _CreateAndLinkResult(
+            new_options=new_options,
+            hb_item_id=created_hb_item_id,
+            error=None,
+            image_warning=image_warning,
+        )
+    except ValueError:
+        _LOGGER.warning(
+            "HomeBox create/link conflict at stage=%s for ha_device_id=%s",
+            stage,
+            ha_device_id,
+        )
+        return _CreateAndLinkResult(None, None, "link_conflict", None)
+    except (
+        HomeBoxApiError,
+        HomeBoxAuthenticationError,
+        HomeBoxConnectionError,
+    ):
+        _LOGGER.exception(
+            "HomeBox create/link failed at stage=%s for ha_device_id=%s hb_item_id=%s",
+            stage,
+            ha_device_id,
+            created_hb_item_id,
+        )
+        return _CreateAndLinkResult(None, None, "create_hb_item_failed", None)
+    finally:
+        if created_hb_item_id is not None and not link_applied:
+            try:
+                await api.async_delete_hb_item(created_hb_item_id)
+            except (
+                HomeBoxApiError,
+                HomeBoxAuthenticationError,
+                HomeBoxConnectionError,
+            ) as err:
+                _LOGGER.warning(
+                    "Unable to roll back HomeBox item %s after create/link failure: %s",
+                    created_hb_item_id,
+                    err,
+                )
 
 
 def _ha_device_label(device_registry: dr.DeviceRegistry, ha_device_id: str) -> str:

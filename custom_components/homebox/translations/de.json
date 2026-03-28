@@ -111,6 +111,7 @@
             }
         },
         "abort": {
+            "missing_config_entry": "Die HomeBox-Integration ist nicht geladen.",
             "missing_ha_device": "Kein Home Assistant-Gerät ausgewählt.",
             "missing_hb_item": "Kein HomeBox-Element ausgewählt.",
             "no_ha_devices": "Keine Home Assistant-Geräte für die Verknüpfung verfügbar.",
