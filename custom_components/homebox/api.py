@@ -151,8 +151,9 @@ class HomeBoxApiClient:
                     raise HomeBoxAuthenticationError
 
                 if response.status >= HTTPStatus.BAD_REQUEST:
+                    detail = await self._extract_error_detail(response)
                     raise HomeBoxApiError(
-                        f"HomeBox {error_context} failed with status {response.status}"
+                        f"HomeBox {error_context} failed with status {response.status}: {detail}"
                     )
 
                 return await response.json()
@@ -464,13 +465,26 @@ class HomeBoxApiClient:
         if tag_ids:
             payload["tagIds"] = tag_ids
 
-        data = await self._async_request_json(
-            "POST",
-            "v1/items",
-            auth_required=True,
-            error_context="create item",
-            payload=payload,
-        )
+        try:
+            data = await self._async_request_json(
+                "POST",
+                "v1/items",
+                auth_required=True,
+                error_context="create item",
+                payload=payload,
+            )
+        except HomeBoxApiError:
+            # Some HomeBox versions reject optional fields on create with HTTP 500.
+            # Retry with minimal payload; caller applies location/tags afterwards.
+            if not location_id and not tag_ids:
+                raise
+            data = await self._async_request_json(
+                "POST",
+                "v1/items",
+                auth_required=True,
+                error_context="create item",
+                payload={"name": name},
+            )
         if not isinstance(data, dict):
             raise HomeBoxApiError("HomeBox create item response is invalid")
 
@@ -611,6 +625,14 @@ class HomeBoxApiClient:
         fields = extract_item_fields(hb_item)
         payload = build_item_update_payload(hb_item, fields)
         payload["locationId"] = hb_location_id
+        await self.async_update_hb_item(hb_item_id, payload)
+
+    async def async_set_hb_item_tags(self, hb_item_id: str, hb_tag_ids: list[str]) -> None:
+        """Set tags for a HomeBox item."""
+        hb_item = await self.async_get_hb_item(hb_item_id)
+        fields = extract_item_fields(hb_item)
+        payload = build_item_update_payload(hb_item, fields)
+        payload["tagIds"] = hb_tag_ids
         await self.async_update_hb_item(hb_item_id, payload)
 
     async def async_get_hb_item_maintenance(
