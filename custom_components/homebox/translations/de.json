@@ -143,6 +143,9 @@
             "total_items": {
                 "name": "Anzahl Elemente"
             },
+            "maintenance_due_next_week": {
+                "name": "Wartungen in den nächsten 7 Tagen fällig"
+            },
             "total_value": {
                 "name": "Gesamtwert"
             }

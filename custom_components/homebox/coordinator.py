@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 import logging
 
 from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY, ConfigEntry
@@ -10,6 +11,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import discovery_flow
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import (
     HomeBoxApiClient,
@@ -45,6 +47,7 @@ class HomeBoxStatistics:
     unlinked_hb_items: list[HomeBoxTaggedItem]
     link_conflicts: list[str]
     linked_battery_forecasts: dict[str, LinkedBatteryForecast]
+    maintenance_due_next_week: int
 
 
 class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
@@ -89,6 +92,7 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
         await self._async_sync_ha_areas()
         group_stats: HomeBoxGroupStatistics = await self.api.async_get_group_statistics()
         link_scan = await scan_tagged_items_for_links(self.api, self.config_entry)
+        maintenance_due_next_week = await self._async_count_maintenance_due_next_week()
         battery_forecasts = await async_collect_linked_battery_forecasts(
             self.hass, self.config_entry
         )
@@ -113,7 +117,38 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
             unlinked_hb_items=link_scan.unlinked_hb_items,
             link_conflicts=link_scan.conflicts,
             linked_battery_forecasts=battery_forecasts,
+            maintenance_due_next_week=maintenance_due_next_week,
         )
+
+    async def _async_count_maintenance_due_next_week(self) -> int:
+        """Count scheduled HomeBox maintenance entries due in the next 7 days."""
+        today = dt_util.utcnow().date()
+        due_until = today + timedelta(days=7)
+        try:
+            entries = await self.api.async_get_hb_maintenance(status="scheduled")
+        except (HomeBoxApiError, HomeBoxConnectionError, HomeBoxAuthenticationError):
+            _LOGGER.warning(
+                "Unable to query HomeBox maintenance entries for due-next-week count"
+            )
+            return 0
+
+        due_count = 0
+        for entry in entries:
+            raw_scheduled_date = entry.get("scheduledDate")
+            if not isinstance(raw_scheduled_date, str) or not raw_scheduled_date.strip():
+                continue
+
+            scheduled_dt = dt_util.parse_datetime(raw_scheduled_date)
+            if scheduled_dt is not None:
+                scheduled_date = scheduled_dt.date()
+            else:
+                scheduled_date = dt_util.parse_date(raw_scheduled_date)
+                if scheduled_date is None:
+                    continue
+
+            if today <= scheduled_date <= due_until:
+                due_count += 1
+        return due_count
 
     async def _async_sync_ha_areas(self) -> None:
         """Mirror Home Assistant areas into HomeBox locations."""

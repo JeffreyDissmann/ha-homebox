@@ -143,6 +143,9 @@
             "total_items": {
                 "name": "Total items"
             },
+            "maintenance_due_next_week": {
+                "name": "Maintenance due next 7 days"
+            },
             "total_value": {
                 "name": "Total value"
             }

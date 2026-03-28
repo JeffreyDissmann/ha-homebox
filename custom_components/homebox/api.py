@@ -650,6 +650,21 @@ class HomeBoxApiClient:
             raise HomeBoxApiError("HomeBox item maintenance response is not a list")
         return [item for item in data if isinstance(item, dict)]
 
+    async def async_get_hb_maintenance(
+        self, *, status: str = "scheduled"
+    ) -> list[dict[str, Any]]:
+        """Return maintenance entries across all HomeBox items."""
+        data = await self._async_request_json(
+            "GET",
+            "v1/maintenance",
+            auth_required=True,
+            error_context="maintenance request",
+            params={"status": status},
+        )
+        if not isinstance(data, list):
+            raise HomeBoxApiError("HomeBox maintenance response is not a list")
+        return [item for item in data if isinstance(item, dict)]
+
     async def async_create_hb_item_maintenance(
         self,
         hb_item_id: str,
