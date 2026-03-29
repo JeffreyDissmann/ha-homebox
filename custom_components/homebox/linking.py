@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import re
 from typing import Any
@@ -44,9 +45,13 @@ class HomeBoxLinkScanResult:
     conflicts: list[str]
 
 
-def get_link_maps(config_entry: ConfigEntry) -> tuple[dict[str, str], dict[str, str]]:
+def get_link_maps(
+    config_entry: ConfigEntry,
+    options: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
     """Return normalized HA-device <-> HB-item link maps from entry options."""
-    links = config_entry.options.get(CONF_LINKS, {})
+    source_options = options if options is not None else config_entry.options
+    links = source_options.get(CONF_LINKS, {})
     ha_device_to_hb_item = links.get(CONF_HA_DEVICE_TO_HB_ITEM, {})
     hb_item_to_ha_device = links.get(CONF_HB_ITEM_TO_HA_DEVICE, {})
 
@@ -65,14 +70,15 @@ def build_updated_options(
     config_entry: ConfigEntry,
     ha_device_to_hb_item: dict[str, str],
     hb_item_to_ha_device: dict[str, str],
+    options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build options payload with updated link maps."""
-    options = dict(config_entry.options)
-    options[CONF_LINKS] = {
+    updated_options = dict(options if options is not None else config_entry.options)
+    updated_options[CONF_LINKS] = {
         CONF_HA_DEVICE_TO_HB_ITEM: ha_device_to_hb_item,
         CONF_HB_ITEM_TO_HA_DEVICE: hb_item_to_ha_device,
     }
-    return options
+    return updated_options
 
 
 def get_ha_device_url(hass: HomeAssistant, ha_device_id: str) -> str:
@@ -193,9 +199,12 @@ async def apply_link(
     api: HomeBoxApiClient,
     ha_device_id: str,
     hb_item_id: str,
+    options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Apply 1:1 link and write backlink into HomeBox item."""
-    ha_device_to_hb_item, hb_item_to_ha_device = get_link_maps(config_entry)
+    ha_device_to_hb_item, hb_item_to_ha_device = get_link_maps(
+        config_entry, options
+    )
     if ha_device_id in ha_device_to_hb_item:
         raise ValueError(
             f"ha_device {ha_device_id} is already linked to hb_item "
@@ -221,7 +230,12 @@ async def apply_link(
                 ha_device_id, configuration_url=api.get_hb_item_url(hb_item_id)
             )
 
-    return build_updated_options(config_entry, ha_device_to_hb_item, hb_item_to_ha_device)
+    return build_updated_options(
+        config_entry,
+        ha_device_to_hb_item,
+        hb_item_to_ha_device,
+        options,
+    )
 
 
 async def remove_link(

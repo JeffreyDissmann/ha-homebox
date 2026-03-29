@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 import logging
@@ -68,6 +69,7 @@ _LOGGER = logging.getLogger(__name__)
 _MANUAL_HA_DEVICE_SELECTION = "__manual__"
 _MAX_SUGGESTED_HA_DEVICES = 3
 SUBENTRY_DEVICE_LINK = "device_link"
+CONF_HA_DEVICE_IDS = "ha_device_ids"
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -426,6 +428,9 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
         """Initialize options flow."""
         super().__init__(config_entry)
         self._selected_ha_device_id_for_create: str | None = None
+        self._selected_area_id_for_bulk_create: str | None = None
+        self._bulk_pending_ha_device_ids: list[str] = []
+        self._bulk_total_ha_device_count: int = 0
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -435,9 +440,182 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
             step_id="init",
             menu_options=[
                 "create_hb_item_from_ha_device",
+                "bulk_create_hb_items_from_area",
                 "unlink_ha_device",
                 "resync",
             ],
+        )
+
+    async def async_step_bulk_create_hb_items_from_area(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select Home Assistant area for bulk HomeBox item creation."""
+        area_registry = ar.async_get(self.hass)
+        device_registry = dr.async_get(self.hass)
+        available_areas = _get_areas_with_devices(device_registry, area_registry)
+        if not available_areas:
+            return self.async_abort(reason="no_ha_devices")
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            selected_area_id = user_input[CONF_AREA]
+            if selected_area_id not in {area.id for area in available_areas}:
+                errors["base"] = "missing_hb_item"
+            else:
+                self._selected_area_id_for_bulk_create = selected_area_id
+                return await self.async_step_bulk_create_select_devices()
+
+        return self.async_show_form(
+            step_id="bulk_create_hb_items_from_area",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_AREA): selector.AreaSelector(),
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_bulk_create_select_devices(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Select multiple devices in area to create HomeBox items for."""
+        selected_area_id = self._selected_area_id_for_bulk_create
+        if selected_area_id is None:
+            return self.async_abort(reason="missing_hb_item")
+
+        area_registry = ar.async_get(self.hass)
+        area_entry = area_registry.async_get_area(selected_area_id)
+        if area_entry is None:
+            return self.async_abort(reason="missing_hb_item")
+
+        area_devices = _get_named_ha_devices_in_area(self.hass, selected_area_id)
+        if not area_devices:
+            return self.async_abort(reason="no_ha_devices")
+
+        ha_device_to_hb_item, _ = get_link_maps(self.config_entry)
+        linked_ids = set(ha_device_to_hb_item)
+        selectable_devices = [device for device in area_devices if device.id not in linked_ids]
+        linked_devices = [device for device in area_devices if device.id in linked_ids]
+        if not selectable_devices:
+            return self.async_abort(reason="no_unlinked_ha_devices")
+
+        selectable_options = [
+            selector.SelectOptionDict(value=device.id, label=_ha_device_candidate_label(device))
+            for device in sorted(
+                selectable_devices,
+                key=lambda device: (
+                    (device.name_by_user or device.name or device.id).lower(),
+                    device.id,
+                ),
+            )
+        ]
+        linked_names = sorted(
+            [
+                device.name_by_user or device.name or device.id
+                for device in linked_devices
+            ],
+            key=str.lower,
+        )
+        linked_device_bullets = "\n".join(f"- {name}" for name in linked_names) if linked_names else "-"
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            selected_ids = user_input.get(CONF_HA_DEVICE_IDS, [])
+            if not isinstance(selected_ids, list):
+                selected_ids = []
+            selectable_ids = {device.id for device in selectable_devices}
+            selected_set = set(selected_ids)
+            if not selected_set:
+                errors["base"] = "no_devices_selected"
+            elif not selected_set.issubset(selectable_ids):
+                errors["base"] = "link_conflict"
+            else:
+                self._bulk_pending_ha_device_ids = selected_ids
+                self._bulk_total_ha_device_count = len(selected_ids)
+                return await self.async_step_bulk_create_hb_item_details()
+
+        return self.async_show_form(
+            step_id="bulk_create_select_devices",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HA_DEVICE_IDS, default=[]): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=selectable_options,
+                            multiple=True,
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    )
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "area_name": area_entry.name,
+                "linked_count": str(len(linked_devices)),
+                "linked_devices": linked_device_bullets,
+            },
+        )
+
+    async def async_step_bulk_create_hb_item_details(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Create HomeBox items for selected area devices, one by one."""
+        if not self._bulk_pending_ha_device_ids:
+            return self.async_create_entry(title="", data=self.options)
+
+        selected_ha_device_id = self._bulk_pending_ha_device_ids[0]
+        device_registry = dr.async_get(self.hass)
+        ha_device = device_registry.async_get(selected_ha_device_id)
+        if ha_device is None:
+            self._bulk_pending_ha_device_ids.pop(0)
+            return await self.async_step_bulk_create_hb_item_details()
+
+        defaults = _build_hb_item_draft_defaults(self.hass, ha_device)
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            result = await _async_create_and_link_hb_item_from_ha_device(
+                self.hass,
+                self.config_entry,
+                selected_ha_device_id,
+                user_input,
+                image_failure_is_error=False,
+                current_options=self.options,
+            )
+            if result.error is not None:
+                errors["base"] = result.error
+            else:
+                assert result.new_options is not None
+                self.options.clear()
+                self.options.update(result.new_options)
+                if result.image_warning is not None:
+                    persistent_notification.async_create(
+                        self.hass,
+                        (
+                            "HomeBox item was created and linked, but image upload "
+                            f"failed ({result.image_warning}). You can add the image later "
+                            "directly in HomeBox."
+                        ),
+                        title="HomeBox image upload warning",
+                        notification_id=(
+                            f"{DOMAIN}_image_upload_warning_{self.config_entry.entry_id}"
+                        ),
+                    )
+                self._bulk_pending_ha_device_ids.pop(0)
+                if not self._bulk_pending_ha_device_ids:
+                    return self.async_create_entry(title="", data=self.options)
+                return await self.async_step_bulk_create_hb_item_details()
+
+        progress_current = self._bulk_total_ha_device_count - len(self._bulk_pending_ha_device_ids) + 1
+        return self.async_show_form(
+            step_id="bulk_create_hb_item_details",
+            data_schema=_build_hb_item_details_schema(defaults),
+            errors=errors,
+            description_placeholders={
+                "device_name": defaults.device_name,
+                "location_name": defaults.area_name or "No area assigned in Home Assistant",
+                "current_index": str(progress_current),
+                "total_count": str(self._bulk_total_ha_device_count),
+            },
         )
 
     async def async_step_create_hb_item_from_ha_device(
@@ -805,6 +983,7 @@ async def _async_create_and_link_hb_item_from_ha_device(
     user_input: dict[str, Any],
     *,
     image_failure_is_error: bool,
+    current_options: Mapping[str, Any] | None = None,
 ) -> _CreateAndLinkResult:
     """Create a HomeBox item from HA device details and link it."""
     coordinator = getattr(config_entry, "runtime_data", None)
@@ -827,7 +1006,7 @@ async def _async_create_and_link_hb_item_from_ha_device(
     stage = "init"
     try:
         stage = "validate_existing_link"
-        ha_device_to_hb_item, _ = get_link_maps(config_entry)
+        ha_device_to_hb_item, _ = get_link_maps(config_entry, current_options)
         if ha_device_id in ha_device_to_hb_item:
             return _CreateAndLinkResult(None, None, "link_conflict", None)
 
@@ -873,6 +1052,7 @@ async def _async_create_and_link_hb_item_from_ha_device(
             api,
             ha_device_id,
             created_hb_item_id,
+            current_options,
         )
         link_applied = True
         return _CreateAndLinkResult(
@@ -1039,5 +1219,37 @@ def _get_unlinked_named_ha_devices(
         for device in device_registry.devices.values()
         if (device.name_by_user or device.name)
         and device.id not in linked_ha_device_ids
+        and not any(identifier[0] == DOMAIN for identifier in device.identifiers)
+    ]
+
+
+def _get_areas_with_devices(
+    device_registry: dr.DeviceRegistry, area_registry: ar.AreaRegistry
+) -> list[ar.AreaEntry]:
+    """Return areas that contain at least one named non-HomeBox device."""
+    used_area_ids = {
+        device.area_id
+        for device in device_registry.devices.values()
+        if device.area_id
+        and (device.name_by_user or device.name)
+        and not any(identifier[0] == DOMAIN for identifier in device.identifiers)
+    }
+    return [
+        area
+        for area in area_registry.areas.values()
+        if area.id in used_area_ids
+    ]
+
+
+def _get_named_ha_devices_in_area(
+    hass: HomeAssistant, area_id: str
+) -> list[dr.DeviceEntry]:
+    """Return named, non-HomeBox devices assigned to the given area."""
+    device_registry = dr.async_get(hass)
+    return [
+        device
+        for device in device_registry.devices.values()
+        if device.area_id == area_id
+        and (device.name_by_user or device.name)
         and not any(identifier[0] == DOMAIN for identifier in device.identifiers)
     ]

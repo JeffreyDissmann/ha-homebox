@@ -80,8 +80,35 @@
             "init": {
                 "menu_options": {
                     "create_hb_item_from_ha_device": "HomeBox-Element aus Home Assistant-Gerät erstellen und verknüpfen",
+                    "bulk_create_hb_items_from_area": "HomeBox-Elemente aus Bereich gesammelt erstellen",
                     "unlink_ha_device": "Verknüpfung zwischen Home Assistant-Gerät und HomeBox-Element aufheben",
                     "resync": "Getaggte HomeBox-Elemente aktualisieren und Verknüpfungen bereinigen"
+                }
+            },
+            "bulk_create_hb_items_from_area": {
+                "title": "Home Assistant-Bereich auswählen",
+                "data": {
+                    "area": "Bereich"
+                }
+            },
+            "bulk_create_select_devices": {
+                "title": "Geräte im Bereich auswählen",
+                "description": "Bereich: {area_name}\n\nBereits verknüpfte Geräte in diesem Bereich ({linked_count}) können nicht ausgewählt werden:\n{linked_devices}",
+                "data": {
+                    "ha_device_ids": "Home Assistant-Geräte zum Hinzufügen"
+                }
+            },
+            "bulk_create_hb_item_details": {
+                "title": "HomeBox-Element erstellen",
+                "description": "Gerät {current_index} von {total_count}: {device_name}\n\nStandort aus Home Assistant-Bereich: {location_name}",
+                "data": {
+                    "hb_item_description": "Beschreibung",
+                    "hb_item_image_url": "Bild-URL (optional)",
+                    "hb_item_manufacturer": "Hersteller",
+                    "hb_item_model_number": "Modellnummer",
+                    "hb_item_name": "Name",
+                    "hb_item_purchase_price": "Wert / Kaufpreis",
+                    "hb_item_serial_number": "Seriennummer"
                 }
             },
             "create_hb_item_from_ha_device": {
@@ -126,6 +153,7 @@
             "image_too_large": "Das Bild ist zu groß (maximal 10 MB).",
             "invalid_image_url": "Die Bild-URL muss eine gültige http(s)-URL sein.",
             "link_conflict": "Verknüpfung kann nicht erstellt werden, da dieses Home Assistant-Gerät oder HomeBox-Element bereits verknüpft ist.",
+            "no_devices_selected": "Wähle mindestens ein Home Assistant-Gerät aus, um fortzufahren.",
             "unlink_conflict": "Verknüpfung kann nicht entfernt werden, da die ausgewählte Verknüpfung nicht mehr übereinstimmt."
         }
     },

@@ -80,8 +80,35 @@
       "init": {
         "menu_options": {
           "create_hb_item_from_ha_device": "Create and link HomeBox item from Home Assistant device",
+          "bulk_create_hb_items_from_area": "Bulk create HomeBox items from area",
           "unlink_ha_device": "Unlink Home Assistant device and HomeBox item",
           "resync": "Refresh tagged HomeBox items and clean up links"
+        }
+      },
+      "bulk_create_hb_items_from_area": {
+        "title": "Select Home Assistant area",
+        "data": {
+          "area": "Area"
+        }
+      },
+      "bulk_create_select_devices": {
+        "title": "Select devices in area",
+        "description": "Area: {area_name}\n\nAlready linked devices in this area ({linked_count}) cannot be selected:\n{linked_devices}",
+        "data": {
+          "ha_device_ids": "Home Assistant devices to add"
+        }
+      },
+      "bulk_create_hb_item_details": {
+        "title": "Create HomeBox item",
+        "description": "Device {current_index} of {total_count}: {device_name}\n\nLocation from Home Assistant area: {location_name}",
+        "data": {
+          "hb_item_description": "Description",
+          "hb_item_image_url": "Image URL (optional)",
+          "hb_item_manufacturer": "Manufacturer",
+          "hb_item_model_number": "Model number",
+          "hb_item_name": "Name",
+          "hb_item_purchase_price": "Value / purchase price",
+          "hb_item_serial_number": "Serial number"
         }
       },
       "create_hb_item_from_ha_device": {
@@ -126,6 +153,7 @@
       "image_too_large": "The image is too large (maximum 10 MB).",
       "invalid_image_url": "Image URL must be a valid http(s) URL.",
       "link_conflict": "Cannot create link because this Home Assistant device or HomeBox item is already linked.",
+      "no_devices_selected": "Select at least one Home Assistant device to continue.",
       "unlink_conflict": "Cannot remove link because the selected link no longer matches."
     }
   },
