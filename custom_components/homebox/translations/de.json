@@ -181,46 +181,5 @@
                 "name": "Gesamtwert"
             }
         }
-    },
-    "config_subentries": {
-        "device_link": {
-            "initiate_flow": {
-                "user": "Neues HomeBox Element erstellen"
-            },
-            "entry_type": "Geräteverknüpfung",
-            "step": {
-                "user": {
-                    "title": "Home Assistant-Gerät auswählen",
-                    "data": {
-                        "ha_device_id": "Unverknüpftes Home Assistant-Gerät"
-                    }
-                },
-                "create_hb_item_details": {
-                    "title": "HomeBox-Element erstellen",
-                    "description": "Gerät: {device_name}\n\nStandort aus Home Assistant-Bereich: {location_name}",
-                    "data": {
-                        "hb_item_description": "Beschreibung",
-                        "hb_item_image_url": "Bild-URL (optional)",
-                        "hb_item_manufacturer": "Hersteller",
-                        "hb_item_model_number": "Modellnummer",
-                        "hb_item_name": "Name",
-                        "hb_item_purchase_price": "Wert / Kaufpreis",
-                        "hb_item_serial_number": "Seriennummer"
-                    }
-                }
-            },
-            "abort": {
-                "missing_config_entry": "Die HomeBox-Integration ist nicht geladen.",
-                "no_unlinked_ha_devices": "Keine unverknüpften Home Assistant-Geräte verfügbar."
-            },
-            "error": {
-                "create_hb_item_failed": "HomeBox-Element konnte nicht erstellt und verknüpft werden. Protokolle prüfen und erneut versuchen.",
-                "image_download_failed": "Das Bild konnte nicht von der URL heruntergeladen werden.",
-                "image_not_image": "Die Bild-URL hat keinen Bild-Inhaltstyp zurückgegeben.",
-                "image_too_large": "Das Bild ist zu groß (maximal 10 MB).",
-                "invalid_image_url": "Die Bild-URL muss eine gültige http(s)-URL sein.",
-                "link_conflict": "Verknüpfung kann nicht erstellt werden, da dieses Home Assistant-Gerät oder HomeBox-Element bereits verknüpft ist."
-            }
-        }
     }
 }

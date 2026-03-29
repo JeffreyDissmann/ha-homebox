@@ -18,12 +18,10 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    ConfigSubentryFlow,
     OptionsFlowWithConfigEntry,
-    SubentryFlowResult,
 )
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import (
     area_registry as ar,
@@ -48,7 +46,6 @@ from .const import (
     CONF_AREA,
     CONF_HA_DEVICE_ID,
     CONF_HB_ITEM_DESCRIPTION,
-    CONF_HB_ITEM_ID,
     CONF_HB_ITEM_IMAGE_URL,
     CONF_HB_ITEM_MANUFACTURER,
     CONF_HB_ITEM_MODEL_NUMBER,
@@ -68,7 +65,6 @@ from .linking import (
 _LOGGER = logging.getLogger(__name__)
 _MANUAL_HA_DEVICE_SELECTION = "__manual__"
 _MAX_SUGGESTED_HA_DEVICES = 3
-SUBENTRY_DEVICE_LINK = "device_link"
 CONF_HA_DEVICE_IDS = "ha_device_ids"
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
@@ -143,15 +139,6 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry: ConfigEntry) -> HomeBoxOptionsFlow:
         """Get the options flow for this handler."""
         return HomeBoxOptionsFlow(config_entry)
-
-    @classmethod
-    @callback
-    def async_get_supported_subentry_types(
-        cls,
-        _: ConfigEntry,
-    ) -> dict[str, type[ConfigSubentryFlow]]:
-        """Return subentries supported by this integration."""
-        return {SUBENTRY_DEVICE_LINK: HomeBoxDeviceLinkSubentryFlow}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -798,121 +785,6 @@ class HomeBoxOptionsFlow(OptionsFlowWithConfigEntry):
             self.options.update(new_options)
         await coordinator.async_refresh()
         return self.async_create_entry(title="", data=self.options)
-
-
-class HomeBoxDeviceLinkSubentryFlow(ConfigSubentryFlow):
-    """Subentry flow to create and link a HomeBox item from one HA device."""
-
-    _selected_ha_device_id_for_create: str | None = None
-
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        """Select an unlinked Home Assistant device to create a HomeBox item for."""
-        entry_id = self.handler[0]
-        config_entry = self.hass.config_entries.async_get_entry(entry_id)
-        if config_entry is None or config_entry.domain != DOMAIN:
-            return self.async_abort(reason="missing_config_entry")
-
-        coordinator = getattr(config_entry, "runtime_data", None)
-        if coordinator is None:
-            return self.async_abort(reason="missing_config_entry")
-
-        # Resync whenever user starts this flow from the integration "Add" button.
-        _, new_options = await async_cleanup_unlinked_hb_backlinks(
-            self.hass, config_entry, coordinator.api
-        )
-        if new_options is not None:
-            self.hass.config_entries.async_update_entry(config_entry, options=new_options)
-        await coordinator.async_refresh()
-
-        unlinked_ha_devices = _get_unlinked_named_ha_devices(self.hass, config_entry)
-        if not unlinked_ha_devices:
-            return self.async_abort(reason="no_unlinked_ha_devices")
-
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            selected_ha_device_id = user_input[CONF_HA_DEVICE_ID]
-            valid_ha_device_ids = {device.id for device in unlinked_ha_devices}
-
-            if selected_ha_device_id not in valid_ha_device_ids:
-                errors["base"] = "link_conflict"
-            else:
-                self._selected_ha_device_id_for_create = selected_ha_device_id
-                return await self.async_step_create_hb_item_details()
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_HA_DEVICE_ID): selector.DeviceSelector(
-                        selector.DeviceSelectorConfig()
-                    ),
-                }
-            ),
-            errors=errors,
-        )
-
-    async def async_step_create_hb_item_details(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        """Create a HomeBox item from the selected Home Assistant device."""
-        entry_id = self.handler[0]
-        config_entry = self.hass.config_entries.async_get_entry(entry_id)
-        if config_entry is None or config_entry.domain != DOMAIN:
-            return self.async_abort(reason="missing_config_entry")
-
-        coordinator = getattr(config_entry, "runtime_data", None)
-        if coordinator is None:
-            return self.async_abort(reason="missing_config_entry")
-
-        selected_ha_device_id = self._selected_ha_device_id_for_create
-        if selected_ha_device_id is None:
-            return self.async_abort(reason="missing_ha_device")
-
-        device_registry = dr.async_get(self.hass)
-        ha_device = device_registry.async_get(selected_ha_device_id)
-        if ha_device is None:
-            return self.async_abort(reason="missing_ha_device")
-
-        defaults = _build_hb_item_draft_defaults(self.hass, ha_device)
-        errors: dict[str, str] = {}
-
-        if user_input is not None:
-            result = await _async_create_and_link_hb_item_from_ha_device(
-                self.hass,
-                config_entry,
-                selected_ha_device_id,
-                user_input,
-                image_failure_is_error=True,
-            )
-            if result.error is not None:
-                errors["base"] = result.error
-            else:
-                assert result.new_options is not None
-                self.hass.config_entries.async_update_entry(
-                    config_entry, options=result.new_options
-                )
-                await coordinator.async_refresh()
-                assert result.hb_item_id is not None
-                return self.async_create_entry(
-                    title=user_input[CONF_HB_ITEM_NAME],
-                    data={
-                        CONF_HA_DEVICE_ID: selected_ha_device_id,
-                        CONF_HB_ITEM_ID: result.hb_item_id,
-                    },
-                    unique_id=f"{result.hb_item_id}:{selected_ha_device_id}",
-                )
-
-        return self.async_show_form(
-            step_id="create_hb_item_details",
-            data_schema=_build_hb_item_details_schema(defaults),
-            errors=errors,
-            description_placeholders={
-                "device_name": defaults.device_name,
-                "location_name": defaults.area_name or "No area assigned in Home Assistant",
-            },
-        )
 
 
 def _build_hb_item_draft_defaults(

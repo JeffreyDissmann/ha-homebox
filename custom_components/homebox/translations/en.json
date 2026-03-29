@@ -181,46 +181,5 @@
                 "name": "Total value"
             }
         }
-    },
-    "config_subentries": {
-        "device_link": {
-            "initiate_flow": {
-                "user": "Create new HomeBox item"
-            },
-            "entry_type": "Device link",
-            "step": {
-                "user": {
-                    "title": "Select Home Assistant device",
-                    "data": {
-                        "ha_device_id": "Unlinked Home Assistant device"
-                    }
-                },
-                "create_hb_item_details": {
-                    "title": "Create HomeBox item",
-                    "description": "Device: {device_name}\n\nLocation from Home Assistant area: {location_name}",
-                    "data": {
-                        "hb_item_description": "Description",
-                        "hb_item_image_url": "Image URL (optional)",
-                        "hb_item_manufacturer": "Manufacturer",
-                        "hb_item_model_number": "Model number",
-                        "hb_item_name": "Name",
-                        "hb_item_purchase_price": "Value / purchase price",
-                        "hb_item_serial_number": "Serial number"
-                    }
-                }
-            },
-            "abort": {
-                "missing_config_entry": "HomeBox integration is not loaded.",
-                "no_unlinked_ha_devices": "No unlinked Home Assistant devices are available."
-            },
-            "error": {
-                "create_hb_item_failed": "Failed to create and link the HomeBox item. Check logs and try again.",
-                "image_download_failed": "Failed to download the image URL.",
-                "image_not_image": "The image URL did not return an image content type.",
-                "image_too_large": "The image is too large (maximum 10 MB).",
-                "invalid_image_url": "Image URL must be a valid http(s) URL.",
-                "link_conflict": "Cannot create link because this Home Assistant device or HomeBox item is already linked."
-            }
-        }
     }
 }
