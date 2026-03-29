@@ -146,6 +146,9 @@
       "maintenance_due_next_week": {
         "name": "Maintenance due next 7 days"
       },
+      "maintenance_due_today": {
+        "name": "Maintenance due today"
+      },
       "total_value": {
         "name": "Total value"
       }

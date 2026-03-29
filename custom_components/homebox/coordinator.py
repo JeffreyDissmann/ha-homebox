@@ -47,6 +47,7 @@ class HomeBoxStatistics:
     unlinked_hb_items: list[HomeBoxTaggedItem]
     link_conflicts: list[str]
     linked_battery_forecasts: dict[str, LinkedBatteryForecast]
+    maintenance_due_today: int
     maintenance_due_next_week: int
 
 
@@ -92,7 +93,9 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
         await self._async_sync_ha_areas()
         group_stats: HomeBoxGroupStatistics = await self.api.async_get_group_statistics()
         link_scan = await scan_tagged_items_for_links(self.api, self.config_entry)
-        maintenance_due_next_week = await self._async_count_maintenance_due_next_week()
+        maintenance_due_today, maintenance_due_next_week = (
+            await self._async_count_maintenance_due()
+        )
         battery_forecasts = await async_collect_linked_battery_forecasts(
             self.hass, self.config_entry
         )
@@ -117,11 +120,12 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
             unlinked_hb_items=link_scan.unlinked_hb_items,
             link_conflicts=link_scan.conflicts,
             linked_battery_forecasts=battery_forecasts,
+            maintenance_due_today=maintenance_due_today,
             maintenance_due_next_week=maintenance_due_next_week,
         )
 
-    async def _async_count_maintenance_due_next_week(self) -> int:
-        """Count scheduled HomeBox maintenance entries due in the next 7 days."""
+    async def _async_count_maintenance_due(self) -> tuple[int, int]:
+        """Count scheduled HomeBox maintenance entries due today and in the next 7 days."""
         today = dt_util.utcnow().date()
         due_until = today + timedelta(days=7)
         try:
@@ -130,9 +134,10 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
             _LOGGER.warning(
                 "Unable to query HomeBox maintenance entries for due-next-week count"
             )
-            return 0
+            return 0, 0
 
-        due_count = 0
+        due_today_count = 0
+        due_next_week_count = 0
         for entry in entries:
             raw_scheduled_date = entry.get("scheduledDate")
             if not isinstance(raw_scheduled_date, str) or not raw_scheduled_date.strip():
@@ -146,9 +151,11 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
                 if scheduled_date is None:
                     continue
 
+            if scheduled_date == today:
+                due_today_count += 1
             if today <= scheduled_date <= due_until:
-                due_count += 1
-        return due_count
+                due_next_week_count += 1
+        return due_today_count, due_next_week_count
 
     async def _async_sync_ha_areas(self) -> None:
         """Mirror Home Assistant areas into HomeBox locations."""

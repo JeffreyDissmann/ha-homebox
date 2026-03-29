@@ -65,6 +65,14 @@ SENSOR_DESCRIPTIONS: Final[tuple[HomeBoxSensorEntityDescription, ...]] = (
         state_class=SensorStateClass.MEASUREMENT,
     ),
     HomeBoxSensorEntityDescription(
+        key="maintenance_due_today",
+        value_key="maintenance_due_today",
+        translation_key="maintenance_due_today",
+        icon="mdi:calendar-today",
+        native_unit_of_measurement="items",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    HomeBoxSensorEntityDescription(
         key="maintenance_due_next_week",
         value_key="maintenance_due_next_week",
         translation_key="maintenance_due_next_week",

@@ -146,6 +146,9 @@
             "maintenance_due_next_week": {
                 "name": "Wartungen in den nächsten 7 Tagen fällig"
             },
+            "maintenance_due_today": {
+                "name": "Wartungen heute fällig"
+            },
             "total_value": {
                 "name": "Gesamtwert"
             }
