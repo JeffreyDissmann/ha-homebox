@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-03-29
+
+### Added
+
+- Added a bulk area import wizard in integration options to create and link HomeBox items from multiple Home Assistant devices in one flow.
+
+### Changed
+
+- Bulk device selection now requires explicit user choice (no auto-selected first item).
+- Bulk import now preserves links for all selected devices across the full run.
+
+### Removed
+
+- Removed the separate Integrations-page top-right Add button flow for creating HomeBox items (subentry path).
+
 ## [0.4.1] - 2026-03-28
 
 ### Added
