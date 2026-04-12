@@ -19,6 +19,14 @@ CONF_HB_ITEM_SERIAL_NUMBER = "hb_item_serial_number"
 CONF_HB_ITEM_NAME = "hb_item_name"
 CONF_HB_ITEM_PURCHASE_PRICE = "hb_item_purchase_price"
 
+SERVICE_ADD_MAINTENANCE = "add_maintenance"
+SERVICE_DELETE_MAINTENANCE = "delete_maintenance"
+SERVICE_CLEAR_MAINTENANCE = "clear_maintenance"
+
+ATTR_MAINTENANCE_NAME = "name"
+ATTR_MAINTENANCE_DESCRIPTION = "description"
+ATTR_MAINTENANCE_SCHEDULED_DATE = "scheduled_date"
+
 LINK_TAG_NAME = "HomeAssistant"
 LINK_BACKLINK_FIELD_NAME = "Home Assistant Device URL"
 

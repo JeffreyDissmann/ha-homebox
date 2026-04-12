@@ -1,0 +1,68 @@
+add_maintenance:
+  name: Add maintenance entry
+  description: >
+    Creates a pending maintenance entry in HomeBox for the item linked to the
+    given entity's device.
+  fields:
+    entity_id:
+      name: Entity
+      description: >
+        Any entity whose device is linked to a HomeBox item. Can be a HomeBox
+        sensor or any other entity on the same device.
+      required: true
+      selector:
+        entity:
+    name:
+      name: Name
+      description: Name of the maintenance entry.
+      required: true
+      example: "Check filter"
+      selector:
+        text:
+    description:
+      name: Description
+      description: Optional details for the maintenance entry.
+      required: false
+      default: ""
+      selector:
+        text:
+          multiline: true
+    scheduled_date:
+      name: Scheduled date
+      description: Date when maintenance is due (defaults to today).
+      required: false
+      selector:
+        date:
+
+delete_maintenance:
+  name: Delete maintenance entry
+  description: >
+    Deletes all pending (non-completed) maintenance entries with the given name
+    for the HomeBox item linked to the entity's device.
+  fields:
+    entity_id:
+      name: Entity
+      description: Any entity whose device is linked to a HomeBox item.
+      required: true
+      selector:
+        entity:
+    name:
+      name: Name
+      description: Name of the maintenance entry to delete.
+      required: true
+      example: "Check filter"
+      selector:
+        text:
+
+clear_maintenance:
+  name: Clear all maintenance entries
+  description: >
+    Deletes all pending (non-completed) maintenance entries for the HomeBox item
+    linked to the entity's device.
+  fields:
+    entity_id:
+      name: Entity
+      description: Any entity whose device is linked to a HomeBox item.
+      required: true
+      selector:
+        entity:

@@ -719,6 +719,22 @@ class HomeBoxApiClient:
         if not isinstance(data, dict):
             raise HomeBoxApiError("HomeBox maintenance update response is invalid")
 
+    async def async_delete_hb_maintenance(self, maintenance_id: str) -> None:
+        """Delete a HomeBox maintenance entry."""
+        url = self._api_url.join(URL(f"v1/maintenance/{maintenance_id}"))
+        headers = self._build_auth_headers()
+        try:
+            async with self._session.delete(url, headers=headers) as response:
+                if response.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
+                    raise HomeBoxAuthenticationError
+                if response.status >= HTTPStatus.BAD_REQUEST:
+                    detail = await self._extract_error_detail(response)
+                    raise HomeBoxApiError(
+                        f"HomeBox delete maintenance failed with status {response.status}: {detail}"
+                    )
+        except ClientError as err:
+            raise HomeBoxConnectionError from err
+
     def get_hb_item_url(self, hb_item_id: str) -> str:
         """Build HomeBox web URL for a given item."""
         return f"{self._host.rstrip('/')}/item/{hb_item_id}"

@@ -28,6 +28,7 @@ from .linking import (
     async_sync_all_linked_hb_item_locations,
     async_sync_linked_hb_item_location,
 )
+from .services import async_setup_services, async_unload_services
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 _LOGGER = logging.getLogger(__name__)
@@ -133,6 +134,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomeBoxConfigEntry) -> b
         )
     )
 
+    async_setup_services(hass)
+
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -142,7 +145,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: HomeBoxConfigEntry) -> b
 
 async def async_unload_entry(hass: HomeAssistant, entry: HomeBoxConfigEntry) -> bool:
     """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        async_unload_services(hass)
+    return unloaded
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: HomeBoxConfigEntry) -> None:
