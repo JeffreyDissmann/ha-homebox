@@ -274,6 +274,8 @@ class HomeBoxLinkedBatteryDepletionDateSensor(
 
     def _resolve_native_value(self) -> date | None:
         """Return depletion date for linked device if available."""
+        if self.coordinator.data is None:
+            return None
         forecast = self.coordinator.data.linked_battery_forecasts.get(self._ha_device_id)
         if forecast is None or forecast.estimated_depletion_at is None:
             return None
@@ -282,6 +284,8 @@ class HomeBoxLinkedBatteryDepletionDateSensor(
     @property
     def extra_state_attributes(self) -> dict[str, str | float | None]:
         """Return battery snapshots and trend data for this linked device."""
+        if self.coordinator.data is None:
+            return {"status": "no_data", "ha_device_id": self._ha_device_id}
         forecast = self.coordinator.data.linked_battery_forecasts.get(self._ha_device_id)
         if forecast is None:
             return {
