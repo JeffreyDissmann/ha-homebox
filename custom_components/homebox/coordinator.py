@@ -92,7 +92,11 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
         """Fetch statistics plus link scan data with shared logic."""
         await self._async_sync_ha_areas()
         group_stats: HomeBoxGroupStatistics = await self.api.async_get_group_statistics()
-        link_scan = await scan_tagged_items_for_links(self.api, self.config_entry)
+        link_scan = await scan_tagged_items_for_links(self.hass, self.api, self.config_entry)
+        if link_scan.updated_options is not None:
+            self.hass.config_entries.async_update_entry(
+                self.config_entry, options=link_scan.updated_options
+            )
         maintenance_due_today, maintenance_due_next_week = (
             await self._async_count_maintenance_due()
         )

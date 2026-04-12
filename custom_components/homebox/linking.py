@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+import logging
 import re
 from typing import Any
 
@@ -17,7 +18,7 @@ from homeassistant.helpers import (
 )
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
-from .api import HomeBoxApiClient
+from .api import HomeBoxApiClient, HomeBoxApiError, HomeBoxAuthenticationError, HomeBoxConnectionError
 from .const import (
     CONF_HA_DEVICE_ID,
     CONF_HA_DEVICE_TO_HB_ITEM,
@@ -26,6 +27,8 @@ from .const import (
     CONF_LINKS,
     LINK_BACKLINK_FIELD_NAME,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
@@ -43,6 +46,7 @@ class HomeBoxLinkScanResult:
 
     unlinked_hb_items: list[HomeBoxTaggedItem]
     conflicts: list[str]
+    updated_options: dict[str, Any] | None = None
 
 
 def get_link_maps(
@@ -158,25 +162,49 @@ def _pop_link_by_ha_device(
 
 
 async def scan_tagged_items_for_links(
+    hass: HomeAssistant,
     api: HomeBoxApiClient,
     config_entry: ConfigEntry,
 ) -> HomeBoxLinkScanResult:
-    """Scan HomeBox tagged items and classify unlinked/conflicting records."""
+    """Scan HomeBox tagged items and classify unlinked/conflicting records.
+
+    For linked items still carrying the tag: restores a missing backlink field.
+    For linked items whose tag was removed: removes the link from HA.
+    """
     ha_device_to_hb_item, hb_item_to_ha_device = get_link_maps(config_entry)
 
     tag_id = await api.async_ensure_link_tag()
     tagged_items = await api.async_get_hb_items_by_tag(tag_id)
+    tagged_item_ids: set[str] = set()
     conflicts: list[str] = []
     unlinked_hb_items: list[HomeBoxTaggedItem] = []
+    maps_changed = False
 
     for tagged_item in tagged_items:
         hb_item_id = tagged_item.item_id
+        tagged_item_ids.add(hb_item_id)
         mapped_ha_device_id = hb_item_to_ha_device.get(hb_item_id)
         if mapped_ha_device_id:
             if ha_device_to_hb_item.get(mapped_ha_device_id) != hb_item_id:
                 conflicts.append(
                     f"Inconsistent map for hb_item={hb_item_id} and ha_device={mapped_ha_device_id}"
                 )
+            elif not _has_backlink_in_fields(tagged_item.fields):
+                # Linked in HA but backlink was manually removed in HomeBox — restore it.
+                ha_device_url = get_ha_device_url(hass, mapped_ha_device_id)
+                try:
+                    await api.async_set_hb_item_backlink(hb_item_id, ha_device_url)
+                    _LOGGER.debug(
+                        "Restored missing backlink for hb_item=%s ha_device=%s",
+                        hb_item_id,
+                        mapped_ha_device_id,
+                    )
+                except (HomeBoxApiError, HomeBoxAuthenticationError, HomeBoxConnectionError):
+                    _LOGGER.warning(
+                        "Unable to restore backlink for hb_item=%s linked to ha_device=%s",
+                        hb_item_id,
+                        mapped_ha_device_id,
+                    )
             continue
 
         has_backlink = _has_backlink_in_fields(tagged_item.fields)
@@ -189,7 +217,40 @@ async def scan_tagged_items_for_links(
                 )
             )
 
-    return HomeBoxLinkScanResult(unlinked_hb_items=unlinked_hb_items, conflicts=conflicts)
+    # Linked items whose HomeAssistant tag was removed → remove the link from HA.
+    for hb_item_id, ha_device_id in list(hb_item_to_ha_device.items()):
+        if hb_item_id not in tagged_item_ids:
+            _LOGGER.debug(
+                "hb_item=%s lost HomeAssistant tag; removing link with ha_device=%s",
+                hb_item_id,
+                ha_device_id,
+            )
+            _pop_bidirectional_link(
+                ha_device_to_hb_item,
+                hb_item_to_ha_device,
+                ha_device_id=ha_device_id,
+                hb_item_id=hb_item_id,
+            )
+            _async_finalize_ha_device_unlink(
+                hass,
+                config_entry_id=config_entry.entry_id,
+                ha_device_id=ha_device_id,
+                ha_device_to_hb_item=ha_device_to_hb_item,
+                api=api,
+                hb_item_id=hb_item_id,
+            )
+            maps_changed = True
+
+    updated_options = (
+        build_updated_options(config_entry, ha_device_to_hb_item, hb_item_to_ha_device)
+        if maps_changed
+        else None
+    )
+    return HomeBoxLinkScanResult(
+        unlinked_hb_items=unlinked_hb_items,
+        conflicts=conflicts,
+        updated_options=updated_options,
+    )
 
 
 async def apply_link(
