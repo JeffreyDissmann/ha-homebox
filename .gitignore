@@ -3,3 +3,11 @@ __pycache__/
 *.pyo
 *.pyd
 .DS_Store
+
+# HA devcontainer runtime data (keep configuration.yaml)
+config/.storage/
+config/home-assistant_v2.db
+config/home-assistant.log*
+config/.HA_VERSION
+config/tts/
+config/.cloud/

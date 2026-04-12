@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -e
+cd "$(dirname "$0")/.."
+
+mkdir -p config
+
+hass --config "${PWD}/config" --script ensure_config
+
+export PYTHONPATH="${PWD}/custom_components:${PYTHONPATH}"
+
+hass --config "${PWD}/config" --debug

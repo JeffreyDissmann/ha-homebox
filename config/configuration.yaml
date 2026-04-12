@@ -1,0 +1,7 @@
+# Home Assistant development configuration
+default_config:
+
+logger:
+  default: info
+  logs:
+    custom_components.homebox: debug
