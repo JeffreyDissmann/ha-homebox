@@ -103,7 +103,7 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
             new_options = await async_sync_battery_maintenance_items(
                 self.hass, self.config_entry, self.api, battery_forecasts
             )
-        except Exception:  # pragma: no cover - best effort maintenance sync
+        except (HomeBoxApiError, HomeBoxAuthenticationError, HomeBoxConnectionError):
             _LOGGER.exception(
                 "Unable to sync Home Assistant maintenance items for battery forecasts"
             )
