@@ -93,7 +93,7 @@ Three actions are available under **Developer Tools → Actions** and in automat
 Creates a pending maintenance entry in HomeBox for the item linked to the given entity's device.
 
 | Field | Required | Description |
-|---|---|---|
+| --- | --- | --- |
 | `entity_id` | yes | Any entity whose device is linked to a HomeBox item |
 | `name` | yes | Name of the maintenance entry |
 | `description` | no | Optional details (default: empty) |
@@ -104,7 +104,7 @@ Creates a pending maintenance entry in HomeBox for the item linked to the given 
 Deletes all pending maintenance entries with the given name for the linked item.
 
 | Field | Required | Description |
-|---|---|---|
+| --- | --- | --- |
 | `entity_id` | yes | Any entity whose device is linked to a HomeBox item |
 | `name` | yes | Name of the entries to delete |
 
@@ -113,7 +113,7 @@ Deletes all pending maintenance entries with the given name for the linked item.
 Deletes all pending maintenance entries for the linked item.
 
 | Field | Required | Description |
-|---|---|---|
+| --- | --- | --- |
 | `entity_id` | yes | Any entity whose device is linked to a HomeBox item |
 
 **Example automation:** When a sensor reports a warning, log it as a maintenance task:
