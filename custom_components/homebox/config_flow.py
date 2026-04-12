@@ -209,6 +209,8 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="missing_config_entry")
 
         coordinator = entry.runtime_data
+        if coordinator.data is None:
+            return self.async_abort(reason="missing_config_entry")
         unlinked_hb_item_ids = {
             tagged_item.hb_item_id for tagged_item in coordinator.data.unlinked_hb_items
         }
