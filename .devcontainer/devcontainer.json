@@ -1,18 +1,29 @@
 {
   "name": "ha-homebox",
-  "image": "mcr.microsoft.com/devcontainers/python:3.13",
+  "image": "mcr.microsoft.com/devcontainers/base:debian",
   "runArgs": ["--name", "ha-homebox-dev"],
-  "features": {
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "lts"
-    }
-  },
-  "postCreateCommand": "scripts/setup && npm install -g @anthropic-ai/claude-code",
+  "onCreateCommand": "npm install -g @anthropic-ai/claude-code",
+  "postCreateCommand": "scripts/setup",
   "forwardPorts": [8123],
   "portsAttributes": {
     "8123": {
       "label": "Home Assistant",
       "onAutoForward": "notify"
+    }
+  },
+  "mounts": [
+    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind"
+  ],
+  "remoteUser": "vscode",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.13"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    },
+    "ghcr.io/devcontainers-extra/features/apt-packages:1": {
+      "packages": "ffmpeg,libturbojpeg0"
     }
   },
   "customizations": {
@@ -27,20 +38,16 @@
         "anthropics.claude-code"
       ],
       "settings": {
-        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "files.eol": "\n",
+        "editor.tabSize": 4,
         "editor.formatOnSave": true,
         "editor.formatOnPaste": true,
+        "editor.formatOnType": false,
+        "files.trimTrailingWhitespace": true,
+        "python.analysis.typeCheckingMode": "basic",
+        "python.analysis.autoImportCompletions": true,
         "[python]": {
-          "editor.defaultFormatter": "charliermarsh.ruff",
-          "editor.codeActionsOnSave": {
-            "source.organizeImports": "explicit"
-          }
-        },
-        "[json]": {
-          "editor.defaultFormatter": "esbenp.prettier-vscode"
-        },
-        "[yaml]": {
-          "editor.defaultFormatter": "esbenp.prettier-vscode"
+          "editor.defaultFormatter": "charliermarsh.ruff"
         }
       }
     }

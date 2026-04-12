@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
+
 set -e
+
 cd "$(dirname "$0")/.."
 
-mkdir -p config
+if [[ ! -d "${PWD}/config" ]]; then
+    mkdir -p "${PWD}/config"
+    hass --config "${PWD}/config" --script ensure_config
+fi
 
-hass --config "${PWD}/config" --script ensure_config
-
-export PYTHONPATH="${PWD}/custom_components:${PYTHONPATH}"
+export PYTHONPATH="${PYTHONPATH}:${PWD}/custom_components"
 
 hass --config "${PWD}/config" --debug
