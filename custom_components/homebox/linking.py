@@ -107,7 +107,6 @@ def _has_backlink_in_fields(fields: list[dict[str, Any]] | None) -> bool:
         if (
             field.get("name") == LINK_BACKLINK_FIELD_NAME
             and isinstance(field.get("textValue"), str)
-            and field.get("textValue")
         ):
             return True
     return False
