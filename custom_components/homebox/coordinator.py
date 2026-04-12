@@ -153,7 +153,7 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
 
             if scheduled_date == today:
                 due_today_count += 1
-            if today <= scheduled_date <= due_until:
+            if today < scheduled_date <= due_until:
                 due_next_week_count += 1
         return due_today_count, due_next_week_count
 
