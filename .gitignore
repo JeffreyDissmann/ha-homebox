@@ -7,7 +7,14 @@ __pycache__/
 # HA devcontainer runtime data (keep configuration.yaml)
 config/.storage/
 config/home-assistant_v2.db
+config/home-assistant_v2.db-shm
+config/home-assistant_v2.db-wal
 config/home-assistant.log*
 config/.HA_VERSION
+config/.ha_run.lock
 config/tts/
 config/.cloud/
+config/blueprints/
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
