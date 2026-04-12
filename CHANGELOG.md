@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-04-12
+
+### Added
+
+- Added three HA service actions for triggering HomeBox maintenance from automations:
+  - `homebox.add_maintenance`: creates a pending maintenance entry on the HomeBox item linked to the given entity's device. Accepts `name` (required), `description` (optional), and `scheduled_date` (optional, defaults to today).
+  - `homebox.delete_maintenance`: deletes all pending maintenance entries matching a given name for the linked item.
+  - `homebox.clear_maintenance`: clears all pending maintenance entries for the linked item.
+  - All actions accept any entity whose device is linked to HomeBox, not just HomeBox sensors.
+- Items whose `HomeAssistant` tag is removed in HomeBox are now automatically unlinked from HA on the next coordinator poll.
+- Missing backlink fields on linked items are now automatically restored by the coordinator.
+
+### Fixed
+
+- Fixed backlink detection rejecting fields with an empty `textValue`.
+- Guard against `None` coordinator data in the battery depletion sensor and discovery flow.
+- Scoped bare `except` to known API error types in maintenance sync.
+- Fixed `maintenance_due_next_week` double-counting items due today.
+
 ## [0.4.2] - 2026-03-29
 
 ### Added
