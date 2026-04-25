@@ -68,6 +68,7 @@ class HomeBoxApiClient:
         self._api_url = URL(self._host).join(URL(API_BASE_PATH + "/"))
         self._session = session
         self._token: str | None = None
+        self._location_entity_type_id: str | None = None
 
     @property
     def is_authenticated(self) -> bool:
@@ -253,26 +254,73 @@ class HomeBoxApiClient:
             raise HomeBoxApiError("HomeBox tags response is not a list")
         return [item for item in data if isinstance(item, dict)]
 
-    async def async_get_locations(self) -> list[dict[str, Any]]:
-        """Return all HomeBox locations."""
+    async def async_get_location_entity_type_id(self) -> str:
+        """Return the entity type ID for locations, fetching and caching it."""
+        if self._location_entity_type_id is not None:
+            return self._location_entity_type_id
+
         data = await self._async_request_json(
             "GET",
-            "v1/locations",
+            "v1/entity-types",
             auth_required=True,
-            error_context="locations request",
+            error_context="entity-types request",
         )
         if not isinstance(data, list):
-            raise HomeBoxApiError("HomeBox locations response is not a list")
-        return [item for item in data if isinstance(item, dict)]
+            raise HomeBoxApiError("HomeBox entity-types response is not a list")
+
+        for entity_type in data:
+            if isinstance(entity_type, dict) and entity_type.get("isLocation") is True:
+                type_id = entity_type.get("id")
+                if isinstance(type_id, str) and type_id:
+                    self._location_entity_type_id = type_id
+                    return type_id
+
+        raise HomeBoxApiError("No location entity type found in HomeBox")
+
+    async def async_get_locations(self) -> list[dict[str, Any]]:
+        """Return all HomeBox locations."""
+        page = 1
+        page_size = 100
+        total: int | None = None
+        locations: list[dict[str, Any]] = []
+
+        while total is None or len(locations) < total:
+            data = await self._async_request_json(
+                "GET",
+                "v1/entities",
+                auth_required=True,
+                error_context="locations request",
+                params={"isLocation": "true", "page": page, "pageSize": page_size},
+            )
+            if not isinstance(data, dict):
+                raise HomeBoxApiError("HomeBox locations response is invalid")
+
+            page_items = data.get("items")
+            total_value = data.get("total")
+            if not isinstance(page_items, list) or not isinstance(total_value, int):
+                raise HomeBoxApiError("HomeBox locations response missing items/total")
+
+            locations.extend(item for item in page_items if isinstance(item, dict))
+            total = total_value
+            if not page_items:
+                break
+            page += 1
+
+        return locations
 
     async def async_create_location(self, name: str) -> dict[str, Any]:
-        """Create a HomeBox location."""
+        """Create a HomeBox location entity."""
+        location_type_id = await self.async_get_location_entity_type_id()
         data = await self._async_request_json(
             "POST",
-            "v1/locations",
+            "v1/entities",
             auth_required=True,
             error_context="create location",
-            payload={"name": name, "description": "", "parentId": None},
+            payload={
+                "name": name,
+                "description": "",
+                "entityTypeId": location_type_id,
+            },
         )
         if not isinstance(data, dict):
             raise HomeBoxApiError("HomeBox create location response is invalid")
@@ -381,18 +429,18 @@ class HomeBoxApiClient:
         while total is None or len(items) < total:
             page_data = await self._async_request_json(
                 "GET",
-                "v1/items",
+                "v1/entities",
                 auth_required=True,
-                error_context="items request",
+                error_context="entities request",
                 params={"tags": [tag_id], "page": page, "pageSize": page_size},
             )
             if not isinstance(page_data, dict):
-                raise HomeBoxApiError("HomeBox items response is invalid")
+                raise HomeBoxApiError("HomeBox entities response is invalid")
 
             page_items = page_data.get("items")
             total_value = page_data.get("total")
             if not isinstance(page_items, list) or not isinstance(total_value, int):
-                raise HomeBoxApiError("HomeBox items response missing items/total")
+                raise HomeBoxApiError("HomeBox entities response missing items/total")
 
             for page_item in page_items:
                 if not isinstance(page_item, dict):
@@ -408,35 +456,35 @@ class HomeBoxApiClient:
         return items
 
     async def async_get_hb_item(self, hb_item_id: str) -> dict[str, Any]:
-        """Return full HomeBox item."""
+        """Return full HomeBox entity (item)."""
         data = await self._async_request_json(
             "GET",
-            f"v1/items/{hb_item_id}",
+            f"v1/entities/{hb_item_id}",
             auth_required=True,
-            error_context="item request",
+            error_context="entity request",
         )
         if not isinstance(data, dict):
-            raise HomeBoxApiError("HomeBox item response is invalid")
+            raise HomeBoxApiError("HomeBox entity response is invalid")
         return data
 
     async def async_update_hb_item(
         self, hb_item_id: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        """Update a HomeBox item with PUT payload."""
+        """Update a HomeBox entity (item) with PUT payload."""
         data = await self._async_request_json(
             "PUT",
-            f"v1/items/{hb_item_id}",
+            f"v1/entities/{hb_item_id}",
             auth_required=True,
-            error_context="item update",
+            error_context="entity update",
             payload=payload,
         )
         if not isinstance(data, dict):
-            raise HomeBoxApiError("HomeBox item update response is invalid")
+            raise HomeBoxApiError("HomeBox entity update response is invalid")
         return data
 
     async def async_delete_hb_item(self, hb_item_id: str) -> None:
-        """Delete a HomeBox item."""
-        url = self._api_url.join(URL(f"v1/items/{hb_item_id}"))
+        """Delete a HomeBox entity (item)."""
+        url = self._api_url.join(URL(f"v1/entities/{hb_item_id}"))
         headers = self._build_auth_headers()
         try:
             async with self._session.delete(url, headers=headers) as response:
@@ -446,7 +494,7 @@ class HomeBoxApiClient:
                     return
                 if response.status >= HTTPStatus.BAD_REQUEST:
                     raise HomeBoxApiError(
-                        f"HomeBox delete item failed with status {response.status}"
+                        f"HomeBox delete entity failed with status {response.status}"
                     )
         except ClientError as err:
             raise HomeBoxConnectionError from err
@@ -458,19 +506,19 @@ class HomeBoxApiClient:
         location_id: str | None,
         tag_ids: list[str] | None,
     ) -> str:
-        """Create a HomeBox item and return its ID."""
+        """Create a HomeBox entity (item) and return its ID."""
         payload: dict[str, Any] = {"name": name}
         if location_id:
-            payload["locationId"] = location_id
+            payload["parentId"] = location_id
         if tag_ids:
             payload["tagIds"] = tag_ids
 
         try:
             data = await self._async_request_json(
                 "POST",
-                "v1/items",
+                "v1/entities",
                 auth_required=True,
-                error_context="create item",
+                error_context="create entity",
                 payload=payload,
             )
         except HomeBoxApiError:
@@ -480,17 +528,17 @@ class HomeBoxApiClient:
                 raise
             data = await self._async_request_json(
                 "POST",
-                "v1/items",
+                "v1/entities",
                 auth_required=True,
-                error_context="create item",
+                error_context="create entity",
                 payload={"name": name},
             )
         if not isinstance(data, dict):
-            raise HomeBoxApiError("HomeBox create item response is invalid")
+            raise HomeBoxApiError("HomeBox create entity response is invalid")
 
         hb_item_id = data.get("id")
         if not isinstance(hb_item_id, str) or not hb_item_id:
-            raise HomeBoxApiError("HomeBox create item response missing item ID")
+            raise HomeBoxApiError("HomeBox create entity response missing entity ID")
         return hb_item_id
 
     async def async_update_hb_item_details(
@@ -516,7 +564,7 @@ class HomeBoxApiClient:
         payload["serialNumber"] = serial_number
         payload["purchasePrice"] = purchase_price
         if location_id:
-            payload["locationId"] = location_id
+            payload["parentId"] = location_id
         await self.async_update_hb_item(hb_item_id, payload)
 
     @staticmethod
@@ -575,7 +623,7 @@ class HomeBoxApiClient:
         except ClientError as err:
             raise HomeBoxImageDownloadError from err
 
-        upload_url = self._api_url.join(URL(f"v1/items/{hb_item_id}/attachments"))
+        upload_url = self._api_url.join(URL(f"v1/entities/{hb_item_id}/attachments"))
         headers = self._build_auth_headers()
 
         form = FormData()
@@ -624,7 +672,7 @@ class HomeBoxApiClient:
         hb_item = await self.async_get_hb_item(hb_item_id)
         fields = extract_item_fields(hb_item)
         payload = build_item_update_payload(hb_item, fields)
-        payload["locationId"] = hb_location_id
+        payload["parentId"] = hb_location_id
         await self.async_update_hb_item(hb_item_id, payload)
 
     async def async_set_hb_item_tags(self, hb_item_id: str, hb_tag_ids: list[str]) -> None:
@@ -638,12 +686,12 @@ class HomeBoxApiClient:
     async def async_get_hb_item_maintenance(
         self, hb_item_id: str, *, status: str = "both"
     ) -> list[dict[str, Any]]:
-        """Return maintenance entries for a HomeBox item."""
+        """Return maintenance entries for a HomeBox entity."""
         data = await self._async_request_json(
             "GET",
-            f"v1/items/{hb_item_id}/maintenance",
+            f"v1/entities/{hb_item_id}/maintenance",
             auth_required=True,
-            error_context="item maintenance request",
+            error_context="entity maintenance request",
             params={"status": status},
         )
         if not isinstance(data, list):
@@ -674,12 +722,12 @@ class HomeBoxApiClient:
         scheduled_date: str,
         cost: str = "0",
     ) -> str:
-        """Create maintenance entry for a HomeBox item and return entry ID."""
+        """Create maintenance entry for a HomeBox entity and return entry ID."""
         data = await self._async_request_json(
             "POST",
-            f"v1/items/{hb_item_id}/maintenance",
+            f"v1/entities/{hb_item_id}/maintenance",
             auth_required=True,
-            error_context="create item maintenance",
+            error_context="create entity maintenance",
             payload={
                 "name": name,
                 "description": description,

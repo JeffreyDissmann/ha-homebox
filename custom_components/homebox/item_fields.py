@@ -96,7 +96,7 @@ def build_item_update_payload(
         "warrantyDetails": hb_item.get("warrantyDetails", "") or "",
         "warrantyExpires": hb_item.get("warrantyExpires"),
         "lifetimeWarranty": bool(hb_item.get("lifetimeWarranty", False)),
-        "syncChildItemsLocations": bool(hb_item.get("syncChildItemsLocations", False)),
+        "syncChildEntityLocations": bool(hb_item.get("syncChildEntityLocations", False)),
         "fields": fields,
         "tagIds": [
             tag["id"]
@@ -104,10 +104,6 @@ def build_item_update_payload(
             if isinstance(tag, dict) and isinstance(tag.get("id"), str)
         ],
     }
-
-    location = hb_item.get("location")
-    if isinstance(location, dict) and isinstance(location.get("id"), str):
-        payload["locationId"] = location["id"]
 
     parent = hb_item.get("parent")
     if isinstance(parent, dict) and isinstance(parent.get("id"), str):

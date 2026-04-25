@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-04-25
+
+### Changed
+
+- Migrated all API calls to the new HomeBox unified entities API, replacing the removed `/v1/items/*` and `/v1/locations/*` endpoints with `/v1/entities/*`.
+- Location creation now uses the `/v1/entity-types` API to resolve and cache the location entity type ID.
+- Location listing now handles paginated responses from the new entities endpoint.
+- Updated all request payloads: `locationId` is now `parentId`, `syncChildItemsLocations` is now `syncChildEntityLocations`.
+- Updated all response parsing: `location` field replaced by `parent` on entity responses.
+- Attachment and maintenance endpoint paths updated to `/v1/entities/{id}/attachments` and `/v1/entities/{id}/maintenance`.
+
 ## [0.5.0] - 2026-04-12
 
 ### Added
