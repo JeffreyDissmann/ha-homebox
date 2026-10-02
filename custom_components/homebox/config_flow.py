@@ -43,6 +43,7 @@ from .api import (
     normalize_homebox_host,
 )
 from .const import (
+    CONF_API_KEY,
     CONF_AREA,
     CONF_HA_DEVICE_ID,
     CONF_HB_ITEM_DESCRIPTION,
@@ -67,7 +68,16 @@ _MANUAL_HA_DEVICE_SELECTION = "__manual__"
 _MAX_SUGGESTED_HA_DEVICES = 3
 CONF_HA_DEVICE_IDS = "ha_device_ids"
 
-STEP_USER_DATA_SCHEMA = vol.Schema(
+STEP_API_KEY_DATA_SCHEMA = vol.Schema(
+    {
+        vol.Required(CONF_HOST): str,
+        vol.Required(CONF_API_KEY): str,
+        vol.Required(CONF_NAME, default=DEFAULT_NAME): str,
+        vol.Optional(CONF_AREA): selector.AreaSelector(),
+    }
+)
+
+STEP_CREDENTIALS_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HOST): str,
         vol.Required(CONF_USERNAME): str,
@@ -103,12 +113,24 @@ class _CreateAndLinkResult:
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect.
 
-    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
+    Data holds host, name, optional area, and one authentication method:
+    either an API key or a username and password.
     """
     api = HomeBoxApiClient(data[CONF_HOST], async_get_clientsession(hass))
 
+    api_key = (data.get(CONF_API_KEY) or "").strip()
+    username = (data.get(CONF_USERNAME) or "").strip()
+    password = data.get(CONF_PASSWORD) or ""
+
     try:
-        await api.async_authenticate(data[CONF_USERNAME], data[CONF_PASSWORD])
+        if api_key:
+            await api.async_authenticate_with_api_key(api_key)
+        elif username or password:
+            await api.async_authenticate(username, password)
+        else:
+            raise InvalidAuth(
+                "Provide a HomeBox API key, or a username and password."
+            )
         await api.async_get_total_items()
     except HomeBoxAuthenticationError as err:
         raise InvalidAuth(str(err)) from err
@@ -143,7 +165,19 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Handle the initial step."""
+        """Let the user choose how to authenticate with HomeBox."""
+        return self.async_show_menu(
+            step_id="user",
+            menu_options=["api_key", "credentials"],
+        )
+
+    async def _async_handle_auth_step(
+        self,
+        step_id: str,
+        data_schema: vol.Schema,
+        user_input: dict[str, Any] | None,
+    ) -> ConfigFlowResult:
+        """Validate one authentication method and create the entry."""
         errors: dict[str, str] = {}
         suggested_values: dict[str, Any] = {}
         if user_input is not None:
@@ -171,12 +205,28 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
             }
 
         return self.async_show_form(
-            step_id="user",
+            step_id=step_id,
             data_schema=self.add_suggested_values_to_schema(
-                STEP_USER_DATA_SCHEMA, suggested_values
+                data_schema, suggested_values
             ),
             errors=errors,
             description_placeholders={"auth_error_detail": self._auth_error_detail},
+        )
+
+    async def async_step_api_key(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle authentication with a HomeBox API key."""
+        return await self._async_handle_auth_step(
+            "api_key", STEP_API_KEY_DATA_SCHEMA, user_input
+        )
+
+    async def async_step_credentials(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle authentication with an email address and password."""
+        return await self._async_handle_auth_step(
+            "credentials", STEP_CREDENTIALS_DATA_SCHEMA, user_input
         )
 
     async def async_step_integration_discovery(

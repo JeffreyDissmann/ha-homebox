@@ -226,6 +226,24 @@ class HomeBoxApiClient:
 
         self._token = self._normalize_token(token)
 
+    async def async_authenticate_with_api_key(self, api_key: str) -> None:
+        """Authenticate with a static HomeBox API key.
+
+        HomeBox static API keys are long-lived and are accepted directly as the
+        Authorization value, so no login round-trip is needed. The key is stored
+        as the token and verified with a lightweight authenticated request.
+        """
+        token = self._normalize_token(api_key)
+        if not token:
+            raise HomeBoxAuthenticationError("HomeBox API key is empty")
+
+        self._token = token
+        try:
+            await self.async_get_group_statistics()
+        except HomeBoxApiError:
+            self._token = None
+            raise
+
     async def async_get_total_items(self) -> int:
         """Return total item count from HomeBox group statistics."""
         return (await self.async_get_group_statistics()).total_items

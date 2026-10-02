@@ -16,7 +16,7 @@
     },
     "error": {
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
-      "invalid_auth_homebox": "Login failed. Verify the HomeBox URL and port (often :7745 or Docker-mapped :3100), and confirm the email address/password are correct for HomeBox local login.",
+      "invalid_auth_homebox": "Authentication failed. Verify the HomeBox URL and port (often :7745 or Docker-mapped :3100), and confirm your API key, or email address/password, are correct.",
       "create_hb_item_failed": "Failed to create and link the HomeBox item. Check logs and try again.",
       "image_download_failed": "Failed to download the image URL.",
       "image_not_image": "The image URL did not return an image content type.",
@@ -28,6 +28,32 @@
     },
     "step": {
       "user": {
+        "title": "HomeBox authentication",
+        "description": "Choose how to authenticate with HomeBox.",
+        "menu_options": {
+          "api_key": "API key (recommended)",
+          "credentials": "Email address and password"
+        }
+      },
+      "api_key": {
+        "title": "HomeBox API key",
+        "description": "If authentication fails, HomeBox returned: {auth_error_detail}",
+        "data": {
+          "area": "Room",
+          "api_key": "API key",
+          "host": "[%key:common::config_flow::data::host%]",
+          "name": "[%key:common::config_flow::data::name%]"
+        },
+        "data_description": {
+          "area": "Select an existing Home Assistant room to suggest for the HomeBox device",
+          "api_key": "A HomeBox API key (Profile → API tokens). It is sent directly to HomeBox, so no login is performed.",
+          "host": "URL or hostname of your HomeBox instance. Common ports are 7745 (default) or 3100 (common Docker mapping), for example: http://homebox.local:3100",
+          "name": "Device name shown in Home Assistant (default: HomeBox)"
+        }
+      },
+      "credentials": {
+        "title": "HomeBox login",
+        "description": "If login fails, HomeBox returned: {auth_error_detail}",
         "data": {
           "area": "Room",
           "host": "[%key:common::config_flow::data::host%]",
@@ -35,7 +61,6 @@
           "password": "[%key:common::config_flow::data::password%]",
           "username": "Email address"
         },
-        "description": "If login fails, HomeBox returned: {auth_error_detail}",
         "data_description": {
           "area": "Select an existing Home Assistant room to suggest for the HomeBox device",
           "host": "URL or hostname of your HomeBox instance. Common ports are 7745 (default) or 3100 (common Docker mapping), for example: http://homebox.local:3100",

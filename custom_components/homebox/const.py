@@ -4,6 +4,7 @@ from datetime import timedelta
 
 DOMAIN = "homebox"
 CONF_AREA = "area"
+CONF_API_KEY = "api_key"
 DEFAULT_NAME = "HomeBox"
 CONF_LINKS = "links"
 CONF_BATTERY_MAINTENANCE = "battery_maintenance"

@@ -23,7 +23,7 @@ from .battery_forecast import (
     LinkedBatteryForecast,
     async_collect_linked_battery_forecasts,
 )
-from .const import DEFAULT_POLL_INTERVAL, DOMAIN
+from .const import CONF_API_KEY, DEFAULT_POLL_INTERVAL, DOMAIN
 from .linking import (
     HomeBoxTaggedItem,
     async_sync_ha_areas_to_hb_locations,
@@ -66,18 +66,30 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
             update_interval=DEFAULT_POLL_INTERVAL,
         )
         self.api = api
-        self._username = entry.data[CONF_USERNAME]
-        self._password = entry.data[CONF_PASSWORD]
+        self._api_key = entry.data.get(CONF_API_KEY)
+        self._username = entry.data.get(CONF_USERNAME)
+        self._password = entry.data.get(CONF_PASSWORD)
+
+    async def _async_authenticate(self) -> None:
+        """Authenticate using an API key when configured, else username/password."""
+        if self._api_key:
+            await self.api.async_authenticate_with_api_key(self._api_key)
+        elif self._username and self._password:
+            await self.api.async_authenticate(self._username, self._password)
+        else:
+            raise HomeBoxAuthenticationError(
+                "No HomeBox API key or username/password configured"
+            )
 
     async def _async_update_data(self) -> HomeBoxStatistics:
         """Fetch HomeBox statistics."""
         try:
             if not self.api.is_authenticated:
-                await self.api.async_authenticate(self._username, self._password)
+                await self._async_authenticate()
             return await self._async_fetch_statistics_and_links()
         except HomeBoxAuthenticationError:
             try:
-                await self.api.async_authenticate(self._username, self._password)
+                await self._async_authenticate()
                 return await self._async_fetch_statistics_and_links()
             except HomeBoxConnectionError as err:
                 raise UpdateFailed("Error communicating with HomeBox API") from err
