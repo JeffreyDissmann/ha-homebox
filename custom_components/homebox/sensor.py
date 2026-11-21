@@ -83,6 +83,31 @@ SENSOR_DESCRIPTIONS: Final[tuple[HomeBoxSensorEntityDescription, ...]] = (
 )
 
 
+# Home Assistant 2026.x gives every device a single config entry, so a device_info
+# carrying another integration's identifiers creates a separate "linked" device
+# instead of joining it. Entities attach to the original device by setting
+# ``entity.device_entry``. The helper below only exists on those versions.
+try:
+    from homeassistant.helpers import helper_integration
+except ImportError:  # pragma: no cover - very old Home Assistant
+    helper_integration = None  # type: ignore[assignment]
+
+_SINGLE_ENTRY_DEVICES: Final = hasattr(helper_integration, "async_remove_helper_devices")
+
+
+def _attach_to_linked_device(entity: SensorEntity, linked_ha_device: dr.DeviceEntry) -> None:
+    """Attach an entity to the user's original HA device rather than a new one."""
+    if _SINGLE_ENTRY_DEVICES:
+        entity.device_entry = linked_ha_device
+        return
+    device_info: DeviceInfo = DeviceInfo()
+    if linked_ha_device.identifiers:
+        device_info["identifiers"] = set(linked_ha_device.identifiers)
+    if linked_ha_device.connections:
+        device_info["connections"] = set(linked_ha_device.connections)
+    entity._attr_device_info = device_info  # noqa: SLF001
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: HomeBoxConfigEntry,
@@ -113,6 +138,15 @@ async def async_setup_entry(
 
     device_registry = dr.async_get(hass)
     ha_device_to_hb_item, _ = get_link_maps(entry)
+    if _SINGLE_ENTRY_DEVICES:
+        # Earlier versions created a duplicate "HomeBox" device per linked device.
+        # Remove those and relink their entities to the original devices.
+        for ha_device_id in ha_device_to_hb_item:
+            helper_integration.async_remove_helper_devices(
+                hass,
+                helper_config_entry_id=entry.entry_id,
+                source_device_id=ha_device_id,
+            )
     for ha_device_id, hb_item_id in ha_device_to_hb_item.items():
         if linked_ha_device := device_registry.async_get(ha_device_id):
             entities.append(
@@ -225,12 +259,7 @@ class HomeBoxLinkedItemIdSensor(
         self._attr_unique_id = f"{config_entry_id}_{ha_device_id}_hb_item_id"
         self._attr_native_value = hb_item_id
 
-        device_info: DeviceInfo = DeviceInfo()
-        if linked_ha_device.identifiers:
-            device_info["identifiers"] = set(linked_ha_device.identifiers)
-        if linked_ha_device.connections:
-            device_info["connections"] = set(linked_ha_device.connections)
-        self._attr_device_info = device_info
+        _attach_to_linked_device(self, linked_ha_device)
 
     @property
     def extra_state_attributes(self) -> dict[str, str]:
@@ -265,12 +294,7 @@ class HomeBoxLinkedBatteryDepletionDateSensor(
         self._attr_unique_id = f"{config_entry_id}_{ha_device_id}_battery_depletion_date"
         self._attr_native_value = self._resolve_native_value()
 
-        device_info: DeviceInfo = DeviceInfo()
-        if linked_ha_device.identifiers:
-            device_info["identifiers"] = set(linked_ha_device.identifiers)
-        if linked_ha_device.connections:
-            device_info["connections"] = set(linked_ha_device.connections)
-        self._attr_device_info = device_info
+        _attach_to_linked_device(self, linked_ha_device)
 
     def _resolve_native_value(self) -> date | None:
         """Return depletion date for linked device if available."""
