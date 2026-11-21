@@ -1081,6 +1081,18 @@ def _format_ha_model_number(ha_device: dr.DeviceEntry) -> str:
     return model or model_id
 
 
+def _iter_devices(device_registry: dr.DeviceRegistry) -> list[dr.DeviceEntry]:
+    """Return all device entries without using the deprecated mapping API.
+
+    Newer Home Assistant iterates ``devices`` as entries; older versions
+    iterate it as a dict of device IDs.
+    """
+    return [
+        device_registry.async_get(item) if isinstance(item, str) else item
+        for item in device_registry.devices
+    ]
+
+
 def _get_unlinked_named_ha_devices(
     hass: HomeAssistant, config_entry: ConfigEntry
 ) -> list[dr.DeviceEntry]:
@@ -1090,7 +1102,7 @@ def _get_unlinked_named_ha_devices(
     linked_ha_device_ids = set(ha_device_to_hb_item)
     return [
         device
-        for device in device_registry.devices.values()
+        for device in _iter_devices(device_registry)
         if (device.name_by_user or device.name)
         and device.id not in linked_ha_device_ids
         and not any(identifier[0] == DOMAIN for identifier in device.identifiers)
@@ -1103,7 +1115,7 @@ def _get_areas_with_devices(
     """Return areas that contain at least one named non-HomeBox device."""
     used_area_ids = {
         device.area_id
-        for device in device_registry.devices.values()
+        for device in _iter_devices(device_registry)
         if device.area_id
         and (device.name_by_user or device.name)
         and not any(identifier[0] == DOMAIN for identifier in device.identifiers)
@@ -1122,7 +1134,7 @@ def _get_named_ha_devices_in_area(
     device_registry = dr.async_get(hass)
     return [
         device
-        for device in device_registry.devices.values()
+        for device in _iter_devices(device_registry)
         if device.area_id == area_id
         and (device.name_by_user or device.name)
         and not any(identifier[0] == DOMAIN for identifier in device.identifiers)

@@ -275,7 +275,20 @@ class HomeBoxApiClient:
                     self._location_entity_type_id = type_id
                     return type_id
 
-        raise HomeBoxApiError("No location entity type found in HomeBox")
+        # HomeBox only creates its default location type lazily, so a group
+        # that has never used locations may not have one yet.
+        created = await self._async_request_json(
+            "POST",
+            "v1/entity-types",
+            auth_required=True,
+            error_context="create location entity type",
+            payload={"name": "Location", "isLocation": True, "icon": ""},
+        )
+        type_id = created.get("id") if isinstance(created, dict) else None
+        if not isinstance(type_id, str) or not type_id:
+            raise HomeBoxApiError("Could not create a location entity type in HomeBox")
+        self._location_entity_type_id = type_id
+        return type_id
 
     async def async_get_locations(self) -> list[dict[str, Any]]:
         """Return all HomeBox locations."""

@@ -165,9 +165,14 @@ class HomeBoxDataUpdateCoordinator(DataUpdateCoordinator[HomeBoxStatistics]):
         """Mirror Home Assistant areas into HomeBox locations."""
         try:
             await async_sync_ha_areas_to_hb_locations(self.hass, self.api)
-        except (HomeBoxApiError, HomeBoxConnectionError, HomeBoxAuthenticationError):
+        except (
+            HomeBoxApiError,
+            HomeBoxConnectionError,
+            HomeBoxAuthenticationError,
+        ) as err:
             _LOGGER.warning(
-                "Unable to sync Home Assistant areas to HomeBox locations during refresh"
+                "Unable to sync Home Assistant areas to HomeBox locations during refresh: %s",
+                err,
             )
 
     def _async_create_linking_discovery_flows(
